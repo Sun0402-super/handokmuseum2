@@ -2,12 +2,10 @@
 """
 한독의약박물관 관람 후기 감성분석 대시보드 (Streamlit)
 ------------------------------------------------------------------------
-- 크롤러(네이버/다음/구글맵/카카오맵/인스타그램)가 만든 후기 엑셀/CSV 를 업로드하면
-  자동으로 채널을 인식하고, 감성분석 + 인터랙티브 차트 + 다운로드를 제공합니다.
-- Streamlit Cloud(streamlit.app) 또는 로컬(streamlit run app.py) 모두 가능.
-- 필요 패키지:  streamlit pandas altair openpyxl   (requirements.txt 참고)
-
-※ 이 웹앱은 '분석/시각화' 전용입니다. 실제 후기 '수집'은 PC의 크롤러에서 하세요.
+- 크롤러(네이버/다음/구글맵/카카오맵)가 만든 후기 엑셀/CSV 를 업로드하면
+  자동으로 채널을 인식하고, 감성분석 + 인터랙티브 차트 + 다운로드를 제공.
+- 파일 형식을 내용으로 판별해 .xlsx / .xls / .csv 를 안전하게 읽습니다.
+- 필요 패키지: streamlit pandas altair openpyxl  (requirements.txt 참고)
 """
 
 import io
@@ -17,7 +15,6 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 
-# ============================== 페이지 설정 ==============================
 st.set_page_config(
     page_title="한독의약박물관 후기 감성분석",
     page_icon="🏛️",
@@ -48,7 +45,6 @@ NEGATORS = ["안", "못", "없", "않", "말고", "빼고"]
 LABELS = ["긍정", "중립", "부정"]
 COLOR = {"긍정": "#4CAF50", "중립": "#9E9E9E", "부정": "#F44336"}
 
-# 파일명 키워드 → 채널명
 CHANNEL_HINTS = {
     "네이버": "네이버블로그", "naver": "네이버블로그",
     "다음": "다음블로그", "daum": "다음블로그",
@@ -59,7 +55,6 @@ CHANNEL_HINTS = {
 }
 
 
-# ----------------------- 감성 판정 로직 -----------------------
 def _count_negated(text, word):
     flips = 0
     for m in re.finditer(re.escape(word), text):
@@ -120,7 +115,6 @@ def _get(row, *keys):
 
 
 def standardize(df, channel):
-    """채널별로 다른 컬럼을 표준 스키마로 통일"""
     recs = []
     for _, r in df.iterrows():
         text = _get(r, "리뷰내용", "본문", "요약")
@@ -157,66 +151,102 @@ def analyze(df):
     return df
 
 
-@st.cache_data(show_spinner=False)
-def read_file(file_bytes, filename):
-    """업로드 파일(xlsx/csv)을 DataFrame 으로 읽기"""
-    if filename.lower().endswith(".csv"):
-        return pd.read_csv(io.BytesIO(file_bytes))
+def _read_csv_any(file_bytes):
+    """여러 인코딩으로 CSV 읽기 시도"""
+    last = None
+    for enc in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
+        try:
+            return pd.read_csv(io.BytesIO(file_bytes), encoding=enc)
+        except Exception as e:
+            last = e
+    raise last
+
+
+def read_any(file_bytes, filename):
+    """
+    업로드 파일을 형식에 맞게 안전하게 읽기.
+    ★ 확장자보다 '파일 내용의 시그니처'를 우선 판별 → 확장자가 틀려도 잘 읽음.
+       - 'PK'(50 4B)         → 진짜 xlsx (zip 컨테이너) → openpyxl
+       - D0 CF 11 E0         → 구형 xls (OLE) → xlrd
+       - 그 외               → CSV(여러 인코딩)로 시도
+    """
+    head = file_bytes[:8]
+
+    # 1) 시그니처 우선 판별 --------------------------------------
+    # 진짜 xlsx
+    if head[:2] == b"PK":
+        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+    # 구형 xls
+    if head[:4] == b"\xD0\xCF\x11\xE0":
+        try:
+            return pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
+        except Exception:
+            return pd.read_excel(io.BytesIO(file_bytes))  # 폴백
+    # 위 둘이 아니면 사실상 텍스트(CSV)일 확률이 높음
+    try:
+        return _read_csv_any(file_bytes)
+    except Exception:
+        pass
+
+    # 2) 시그니처로 안 되면 확장자 힌트로 재시도 ------------------
+    name = (filename or "").lower()
+    if name.endswith((".xlsx", ".xlsm")):
+        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+    if name.endswith(".xls"):
+        return pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
+
+    # 3) 최후: pandas 자동 판별 ----------------------------------
     return pd.read_excel(io.BytesIO(file_bytes))
 
 
+@st.cache_data(show_spinner=False)
+def read_file(file_bytes, filename):
+    return read_any(file_bytes, filename)
+
+
 def to_excel_bytes(df):
-    """결과 DataFrame 을 엑셀 바이트로 (다운로드용)"""
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="감성분석결과")
     return buf.getvalue()
 
 
-# ============================== UI 시작 ==============================
+# ============================== UI ==============================
 st.title("🏛️ 한독의약박물관 관람 후기 감성분석")
-st.caption("네이버·다음 블로그, 구글맵·카카오맵 리뷰, 인스타그램 후기를 한 곳에서 분석합니다.")
+st.caption("네이버·다음 블로그, 구글맵·카카오맵 리뷰를 한 곳에서 분석합니다.")
 
 with st.sidebar:
     st.header("📂 데이터 업로드")
-    st.markdown(
-        "PC의 크롤러가 만든 **후기 엑셀(.xlsx)** 또는 **.csv** 파일을 "
-        "여러 개 한꺼번에 올려주세요."
-    )
+    st.markdown("PC 크롤러가 만든 **후기 엑셀(.xlsx)** 또는 **.csv** 를 여러 개 올려주세요.")
     uploaded = st.file_uploader(
         "후기 파일 선택",
-        type=["xlsx", "csv"],
+        type=["xlsx", "xls", "csv"],
         accept_multiple_files=True,
         label_visibility="collapsed",
     )
     st.divider()
     st.subheader("ℹ️ 채널 자동 인식")
-    st.caption(
-        "파일명에 '네이버/다음/구글/카카오/인스타'가 들어 있으면 "
-        "자동으로 채널이 분류됩니다."
-    )
+    st.caption("파일명에 '네이버/다음/구글/카카오'가 있으면 자동 분류됩니다.")
     st.divider()
     st.caption("분석 전용 대시보드 · 후기 수집은 PC 크롤러에서 진행")
 
-# --- 데이터 없을 때 안내 ---
 if not uploaded:
     st.info(
         "👈 왼쪽 사이드바에서 후기 파일을 업로드하면 분석이 시작됩니다.\n\n"
-        "예시 파일명: `네이버 블로그_2026-08-06.xlsx`, `구글맵 리뷰_2026-08-06.xlsx`"
+        "예시: `네이버 블로그_2026-08-06.xlsx`, `구글맵 리뷰_2026-08-06.xlsx`"
     )
     with st.expander("💡 이 대시보드는 무엇을 하나요?"):
         st.markdown("""
-        - 업로드한 후기들을 **긍정 / 중립 / 부정**으로 자동 분류합니다.
+        - 업로드한 후기를 **긍정 / 중립 / 부정**으로 자동 분류합니다.
         - **별점이 있는 채널**(구글맵·카카오맵)은 별점을 우선 사용하고,
           별점이 없으면 **본문 단어**로 판정합니다.
-        - 채널별·감성별 **인터랙티브 차트**와 **필터 가능한 표**를 제공합니다.
-        - 분석 결과를 **엑셀/CSV로 다운로드**할 수 있습니다.
+        - 채널별·감성별 **인터랙티브 차트**와 **필터 표**를 제공합니다.
+        - 결과를 **엑셀/CSV로 다운로드**할 수 있습니다.
         """)
     st.stop()
 
-# --- 업로드 파일 읽기 + 표준화 ---
-frames = []
-load_info = []
+# --- 업로드 읽기 ---
+frames, load_info = [], []
 for f in uploaded:
     try:
         raw = read_file(f.getvalue(), f.name)
@@ -231,14 +261,12 @@ if not frames:
     st.warning("읽을 수 있는 데이터가 없습니다. 파일 형식을 확인해주세요.")
     st.stop()
 
-data = pd.concat(frames, ignore_index=True)
-data = analyze(data)
+data = analyze(pd.concat(frames, ignore_index=True))
 
-# --- 로드 요약 ---
 with st.expander(f"📥 불러온 파일 {len(load_info)}개 보기", expanded=False):
     st.table(pd.DataFrame(load_info, columns=["파일명", "인식된 채널", "건수"]))
 
-# ============================== 상단 지표(KPI) ==============================
+# --- KPI ---
 total = len(data)
 counts = data["감성"].value_counts().reindex(LABELS).fillna(0).astype(int)
 pos_rate = counts["긍정"] / total * 100 if total else 0
@@ -254,51 +282,32 @@ c5.metric("⭐ 평균 별점", f"{avg_star:.2f}" if avg_star is not None else "-
 
 st.divider()
 
-# ============================== 차트 영역 ==============================
+# --- 차트 ---
 col_left, col_right = st.columns([1, 1.3])
-
-# 1) 감성 분포 (도넛)
 with col_left:
     st.subheader("전체 감성 분포")
     pie_df = pd.DataFrame({"감성": counts.index, "건수": counts.values})
-    donut = (
-        alt.Chart(pie_df)
-        .mark_arc(innerRadius=70)
-        .encode(
-            theta=alt.Theta("건수:Q"),
-            color=alt.Color("감성:N",
-                            scale=alt.Scale(domain=LABELS,
-                                            range=[COLOR[l] for l in LABELS]),
-                            legend=alt.Legend(title="감성")),
-            tooltip=["감성", "건수"],
-        )
-        .properties(height=320)
-    )
+    donut = (alt.Chart(pie_df).mark_arc(innerRadius=70).encode(
+        theta=alt.Theta("건수:Q"),
+        color=alt.Color("감성:N",
+                        scale=alt.Scale(domain=LABELS, range=[COLOR[l] for l in LABELS]),
+                        legend=alt.Legend(title="감성")),
+        tooltip=["감성", "건수"]).properties(height=320))
     st.altair_chart(donut, use_container_width=True)
 
-# 2) 채널별 감성 (누적 막대)
 with col_right:
     st.subheader("채널별 감성 분포")
-    ch_df = (data.groupby(["채널", "감성"]).size()
-             .reset_index(name="건수"))
-    bar = (
-        alt.Chart(ch_df)
-        .mark_bar()
-        .encode(
-            y=alt.Y("채널:N", title=None, sort="-x"),
-            x=alt.X("건수:Q", title="건수"),
-            color=alt.Color("감성:N",
-                            scale=alt.Scale(domain=LABELS,
-                                            range=[COLOR[l] for l in LABELS]),
-                            legend=alt.Legend(title="감성")),
-            order=alt.Order("감성:N"),
-            tooltip=["채널", "감성", "건수"],
-        )
-        .properties(height=320)
-    )
+    ch_df = data.groupby(["채널", "감성"]).size().reset_index(name="건수")
+    bar = (alt.Chart(ch_df).mark_bar().encode(
+        y=alt.Y("채널:N", title=None, sort="-x"),
+        x=alt.X("건수:Q", title="건수"),
+        color=alt.Color("감성:N",
+                        scale=alt.Scale(domain=LABELS, range=[COLOR[l] for l in LABELS]),
+                        legend=alt.Legend(title="감성")),
+        order=alt.Order("감성:N"),
+        tooltip=["채널", "감성", "건수"]).properties(height=320))
     st.altair_chart(bar, use_container_width=True)
 
-# 3) 월별 추이 (작성일 있는 것만)
 date_series = pd.to_datetime(data["작성일"], errors="coerce")
 if date_series.notna().any():
     st.subheader("월별 후기 추이")
@@ -306,26 +315,18 @@ if date_series.notna().any():
     tmp["_월"] = date_series.dt.to_period("M").astype(str)
     tmp = tmp[tmp["_월"] != "NaT"]
     trend = tmp.groupby(["_월", "감성"]).size().reset_index(name="건수")
-    line = (
-        alt.Chart(trend)
-        .mark_bar()
-        .encode(
-            x=alt.X("_월:N", title="월"),
-            y=alt.Y("건수:Q", title="건수"),
-            color=alt.Color("감성:N",
-                            scale=alt.Scale(domain=LABELS,
-                                            range=[COLOR[l] for l in LABELS])),
-            tooltip=["_월", "감성", "건수"],
-        )
-        .properties(height=300)
-    )
+    line = (alt.Chart(trend).mark_bar().encode(
+        x=alt.X("_월:N", title="월"),
+        y=alt.Y("건수:Q", title="건수"),
+        color=alt.Color("감성:N",
+                        scale=alt.Scale(domain=LABELS, range=[COLOR[l] for l in LABELS])),
+        tooltip=["_월", "감성", "건수"]).properties(height=300))
     st.altair_chart(line, use_container_width=True)
 
 st.divider()
 
-# ============================== 상세 표 + 필터 ==============================
+# --- 상세 표 ---
 st.subheader("📋 후기 상세 보기")
-
 f1, f2, f3 = st.columns([1, 1, 2])
 sel_channels = f1.multiselect("채널", sorted(data["채널"].unique()),
                               default=sorted(data["채널"].unique()))
@@ -340,15 +341,14 @@ show_cols = ["채널", "작성일", "작성자", "별점", "감성", "판정근�
              "제목", "내용", "URL"]
 st.caption(f"필터 결과: {len(view):,}건")
 st.dataframe(
-    view[show_cols],
-    use_container_width=True, hide_index=True, height=380,
+    view[show_cols], use_container_width=True, hide_index=True, height=380,
     column_config={
         "URL": st.column_config.LinkColumn("URL", width="small"),
         "내용": st.column_config.TextColumn("내용", width="large"),
     },
 )
 
-# ============================== 다운로드 ==============================
+# --- 다운로드 ---
 st.divider()
 st.subheader("💾 결과 다운로드")
 today = datetime.date.today().strftime("%Y-%m-%d")
