@@ -4,12 +4,13 @@
 ------------------------------------------------------------------------
 - 크롤러(네이버/다음/구글맵/카카오맵)가 만든 후기 엑셀/CSV 를 업로드하면
   자동으로 채널을 인식하고, 감성분석 + 인터랙티브 차트 + 다운로드를 제공.
-- 파일 형식을 내용으로 판별해 .xlsx / .xls / .csv 를 안전하게 읽습니다.
-- 필요 패키지: streamlit pandas altair openpyxl  (requirements.txt 참고)
+- xlwings/openpyxl/엑셀이 저장한 .xlsx 를 모두 안전하게 읽습니다.
+- 필요 패키지: streamlit pandas altair openpyxl xlrd  (requirements.txt 참고)
 """
 
 import io
 import re
+import zipfile
 import datetime
 import pandas as pd
 import altair as alt
@@ -24,22 +25,42 @@ st.set_page_config(
 
 # ----------------------- 한국어 감성 사전 -----------------------
 POSITIVE_WORDS = {
+    # 기본 감정
     "좋": 2, "최고": 3, "훌륭": 3, "멋": 2, "예쁘": 2, "이쁘": 2, "아름": 2,
     "만족": 3, "추천": 3, "감동": 3, "인상": 2, "유익": 3, "알차": 3, "알찬": 3,
     "재밌": 3, "재미있": 3, "재미": 2, "즐겁": 3, "즐거": 2, "행복": 3, "친절": 3,
     "깔끔": 2, "깨끗": 2, "쾌적": 2, "편하": 2, "편리": 2, "넓": 1, "다양": 2,
-    "볼거리": 2, "유익하": 3, "교육적": 3, "가성비": 2, "무료": 1, "가볼만": 3,
+    "볼거리": 2, "교육적": 3, "가성비": 2, "무료": 1, "가볼만": 3, "볼만": 2,
     "강추": 3, "짱": 2, "굿": 2, "좋아요": 2, "최애": 3, "감사": 2, "완벽": 3,
     "신기": 2, "흥미": 2, "정성": 2, "따뜻": 2, "힐링": 3, "인생": 2, "대박": 3,
     "잘": 1, "좋았": 2, "좋은": 2, "좋네": 2, "좋고": 2, "멋진": 2, "예쁜": 2,
+    # 박물관/전시/체험 맥락 (확장)
+    "체험": 2, "배우": 2, "배웠": 2, "배울": 2, "관람": 1, "구경": 1, "구성": 1,
+    "설명": 1, "친절하게": 3, "자세": 1, "유익하": 3, "알차게": 3,
+    "또가": 3, "또오": 3, "또방문": 3, "재방문": 3, "다시가": 2, "다시오": 2,
+    "추천해": 3, "추천합니다": 3, "추천드": 3, "가보세요": 2, "가볼": 2,
+    "아이가좋아": 3, "아이들이좋아": 3, "아이와": 1, "가족": 1, "나들이": 1,
+    "볼거리가많": 3, "체험이많": 3, "프로그램": 1, "잘되어": 2, "잘꾸": 2,
+    "잘정리": 2, "정리가잘": 2, "잘보존": 2, "인상적": 3, "의미있": 3,
+    "뜻깊": 3, "기대이상": 3, "생각보다좋": 3, "만족스": 3, "즐길": 2,
+    "즐겼": 2, "체험할": 2, "체험형": 2, "좋았습니다": 3, "좋았어요": 3,
+    "좋더": 2, "괜찮": 2, "쏠쏠": 2, "유용": 3,
 }
 NEGATIVE_WORDS = {
+    # 기본 감정
     "별로": -3, "실망": -3, "최악": -3, "불친절": -3, "지루": -3, "재미없": -3,
-    "아쉽": -2, "아쉬": -2, "부족": -2, "협소": -2, "좁": -1, "낡": -2, "오래": -1,
+    "아쉽": -2, "아쉬": -2, "부족": -2, "협소": -2, "좁": -1, "낡": -2, "오래되": -1,
     "비싸": -2, "불편": -2, "더럽": -3, "지저분": -2, "불쾌": -3, "짜증": -3,
-    "화나": -3, "후회": -3, "그냥": -1, "그저": -1, "별거": -2, "볼거없": -3,
+    "화나": -3, "후회": -3, "별거": -2, "볼거없": -3, "볼게없": -3,
     "허접": -3, "엉망": -3, "무성의": -3, "썰렁": -2, "노잼": -3, "낭비": -3,
-    "글쎄": -1, "안좋": -2, "나쁘": -3, "최악이": -3, "실망스": -3, "별루": -3,
+    "안좋": -2, "나쁘": -3, "최악이": -3, "실망스": -3, "별루": -3,
+    # 박물관/방문 맥락 (확장)
+    "웨이팅": -2, "오래기다": -3, "주차힘": -2, "주차가불편": -3,
+    "설명부족": -3, "볼게없": -3, "볼것이없": -3, "볼것도없": -3,
+    "규모가작": -2, "생각보다작": -2, "기대이하": -3, "돈아깝": -3,
+    "시간낭비": -3, "재미없": -3, "재미가없": -3, "심심": -2, "밋밋": -2,
+    "관리안": -2, "관리가안": -3, "정비가안": -2, "찾기힘": -2, "찾기어렵": -2,
+    "교통불편": -2,
 }
 NEGATORS = ["안", "못", "없", "않", "말고", "빼고"]
 LABELS = ["긍정", "중립", "부정"]
@@ -55,6 +76,65 @@ CHANNEL_HINTS = {
 }
 
 
+# ----------------------- 파일 읽기 (핵심) -----------------------
+def _read_csv_any(file_bytes):
+    """여러 인코딩으로 CSV 읽기 시도"""
+    last = None
+    for enc in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
+        try:
+            return pd.read_csv(io.BytesIO(file_bytes), encoding=enc)
+        except Exception as e:
+            last = e
+    raise last
+
+
+def _is_zip(file_bytes):
+    """실제로 zip(=xlsx 컨테이너)으로 열리는지 확인"""
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+            names = z.namelist()
+        return any(n.startswith("xl/") for n in names) or "[Content_Types].xml" in names
+    except Exception:
+        return False
+
+
+def read_any(file_bytes, filename):
+    """
+    업로드 파일을 안전하게 읽기 (xlwings/openpyxl/엑셀 저장본 모두 대응).
+    핵심: xlsx 는 결국 zip 컨테이너이므로,
+         '.xlsx 확장자' 또는 'zip으로 열림'이면 무조건 openpyxl 로 읽고
+         절대 xlrd 로 넘어가지 않는다. (OLE2 오류 방지)
+    """
+    name = (filename or "").lower()
+
+    # 1) 확장자가 xlsx/xlsm → 무조건 openpyxl (xlrd 안 씀)
+    if name.endswith((".xlsx", ".xlsm")):
+        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+
+    # 2) 확장자가 애매해도 내용이 zip이면 xlsx 로 간주
+    if _is_zip(file_bytes):
+        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+
+    # 3) 진짜 구형 xls (OLE2 시그니처) → xlrd
+    if file_bytes[:4] == b"\xD0\xCF\x11\xE0" or name.endswith(".xls"):
+        return pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
+
+    # 4) 그 외 → CSV (여러 인코딩)
+    try:
+        return _read_csv_any(file_bytes)
+    except Exception:
+        pass
+
+    # 5) 최후 폴백
+    return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+
+
+@st.cache_data(show_spinner=False)
+def read_file(file_bytes, filename):
+    return read_any(file_bytes, filename)
+
+
+# ----------------------- 감성 판정 -----------------------
 def _count_negated(text, word):
     flips = 0
     for m in re.finditer(re.escape(word), text):
@@ -70,29 +150,37 @@ def score_text(text):
     t = text.replace(" ", "")
     score = 0
     for word, w in POSITIVE_WORDS.items():
-        cnt = t.count(word)
+        key = word.replace(" ", "")
+        cnt = t.count(key)
         if cnt:
-            flipped = _count_negated(text, word)
+            flipped = _count_negated(text, key)
             score += w * (cnt - flipped) - w * flipped
     for word, w in NEGATIVE_WORDS.items():
-        score += w * t.count(word)
+        key = word.replace(" ", "")
+        score += w * t.count(key)
     return score
 
 
 def label_from_star(star):
+    # 빈값/NaN/None/'None' 문자열은 '별점 없음'으로 처리 (중립 오판 방지)
+    if star is None:
+        return None
     try:
         s = float(star)
     except (TypeError, ValueError):
+        return None
+    if s != s:          # NaN 체크
         return None
     if s >= 4:
         return "긍정"
     if s <= 2:
         return "부정"
-    return "중립"
+    return "중립"       # 별점 3점만 진짜 중립
 
 
 def label_from_score(score):
-    if score > 1:
+    # 중립 구간 축소: 0보다 크면 긍정, 작으면 부정, 딱 0(감정어 없음)만 중립
+    if score > 0:
         return "긍정"
     if score < 0:
         return "부정"
@@ -149,59 +237,6 @@ def analyze(df):
     df["판정근거"] = bases
     df["감성점수"] = scores
     return df
-
-
-def _read_csv_any(file_bytes):
-    """여러 인코딩으로 CSV 읽기 시도"""
-    last = None
-    for enc in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
-        try:
-            return pd.read_csv(io.BytesIO(file_bytes), encoding=enc)
-        except Exception as e:
-            last = e
-    raise last
-
-
-def read_any(file_bytes, filename):
-    """
-    업로드 파일을 형식에 맞게 안전하게 읽기.
-    ★ 확장자보다 '파일 내용의 시그니처'를 우선 판별 → 확장자가 틀려도 잘 읽음.
-       - 'PK'(50 4B)         → 진짜 xlsx (zip 컨테이너) → openpyxl
-       - D0 CF 11 E0         → 구형 xls (OLE) → xlrd
-       - 그 외               → CSV(여러 인코딩)로 시도
-    """
-    head = file_bytes[:8]
-
-    # 1) 시그니처 우선 판별 --------------------------------------
-    # 진짜 xlsx
-    if head[:2] == b"PK":
-        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
-    # 구형 xls
-    if head[:4] == b"\xD0\xCF\x11\xE0":
-        try:
-            return pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
-        except Exception:
-            return pd.read_excel(io.BytesIO(file_bytes))  # 폴백
-    # 위 둘이 아니면 사실상 텍스트(CSV)일 확률이 높음
-    try:
-        return _read_csv_any(file_bytes)
-    except Exception:
-        pass
-
-    # 2) 시그니처로 안 되면 확장자 힌트로 재시도 ------------------
-    name = (filename or "").lower()
-    if name.endswith((".xlsx", ".xlsm")):
-        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
-    if name.endswith(".xls"):
-        return pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
-
-    # 3) 최후: pandas 자동 판별 ----------------------------------
-    return pd.read_excel(io.BytesIO(file_bytes))
-
-
-@st.cache_data(show_spinner=False)
-def read_file(file_bytes, filename):
-    return read_any(file_bytes, filename)
 
 
 def to_excel_bytes(df):
