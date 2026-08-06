@@ -39,34 +39,38 @@ st.markdown(f"""
         font-family: 'Pretendard','Malgun Gothic','Segoe UI',sans-serif;
         color: {THEME['text']};
     }}
-    /* 본문 여백 넓히기 (읽기 편하게) */
-    .block-container {{ padding-top: 1.2rem; padding-bottom: 2rem;
+    /* Streamlit 기본 상단 헤더 숨기기 (우리 배너가 그 자리를 대신함) */
+    header[data-testid="stHeader"] {{ display: none; }}
+
+    /* 본문 여백: 상단은 고정 배너 높이만큼 확보 */
+    .block-container {{ padding-top: 96px; padding-bottom: 2rem;
                         max-width: 1300px; }}
 
-    /* ---- 헤더 배너 (Style C: 은은한 슬레이트) ---- */
+    /* ---- 헤더 배너: 화면 최상단 '전체 폭'(사이드바까지) 고정 ---- */
     .hero {{
+        position: fixed; top: 0; left: 0; right: 0; z-index: 999;
+        height: 76px; display: flex; align-items: center;
         background: linear-gradient(135deg, {THEME['navy']} 0%,
                     {THEME['slate2']} 100%);
-        padding: 30px 36px; border-radius: 20px; margin-bottom: 22px;
+        padding: 0 30px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.18);
         color: #fff;
     }}
-    .hero-row {{ display:flex; align-items:center; gap:14px; }}
+    .hero-row {{ display:flex; align-items:center; gap:13px; }}
     .hero-logo {{
-        width:52px; height:52px; border-radius:14px; flex:none;
+        width:42px; height:42px; border-radius:12px; flex:none;
         background: rgba(255,255,255,0.08);
         border: 1px solid rgba(255,255,255,0.12);
         display:flex; align-items:center; justify-content:center;
-        font-size:26px;
+        font-size:21px;
     }}
-    .hero h1 {{ margin: 0; font-size: 26px; font-weight: 800;
-                letter-spacing: -0.4px; color:#F8FAFC; }}
-    .hero p  {{ margin: 5px 0 0; font-size: 14px; color:#CBD5E1; }}
-    .hero .chips {{ display:flex; gap:8px; margin-top:18px; flex-wrap:wrap; }}
-    .hero .chip {{
-        background: rgba(255,255,255,0.10); color:#E2E8F0;
-        border: 1px solid rgba(255,255,255,0.10);
-        padding:6px 12px; border-radius:8px;
-        font-size:12px; font-weight:600;
+    .hero h1 {{ margin: 0; font-size: 20px; font-weight: 800;
+                letter-spacing: -0.3px; color:#F8FAFC; line-height:1.2; }}
+    .hero p  {{ margin: 2px 0 0; font-size: 12.5px; color:#CBD5E1; }}
+
+    /* 사이드바 내용도 배너 높이만큼 아래로 */
+    section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{
+        padding-top: 92px;
     }}
 
     /* ---- KPI 카드 ---- */
@@ -107,7 +111,38 @@ st.markdown(f"""
         background: {THEME['navy']};
     }}
     /* 사이드바 */
-    section[data-testid="stSidebar"] {{ background:#EAF2FD; }}
+    section[data-testid="stSidebar"] {{ background:#F0F1FA; }}
+
+    /* ---- 업로드 카드 (메인 영역) ---- */
+    .upload-card {{
+        background: {THEME['card']}; border: 1px solid #E7EAF3;
+        border-radius: 16px; padding: 8px 20px 4px;
+        box-shadow: 0 4px 16px rgba(79,70,229,0.06); margin-bottom: 18px;
+    }}
+    .upload-card .uc-title {{ font-size: 15px; font-weight: 700;
+        color: {THEME['navy']}; margin: 10px 0 2px; }}
+    .upload-card .uc-desc {{ font-size: 12.5px; color:#7A8698; margin-bottom: 8px; }}
+
+    /* ---- 사이드바 메뉴(라디오 → 메뉴 버튼처럼) ---- */
+    section[data-testid="stSidebar"] .stRadio > label {{ display:none; }}
+    section[data-testid="stSidebar"] .stRadio [role="radiogroup"] {{
+        gap: 6px; }}
+    section[data-testid="stSidebar"] .stRadio [role="radiogroup"] label {{
+        background:#FFFFFF; border:1px solid #E4E7F2; border-radius:12px;
+        padding:11px 14px; font-weight:600; font-size:14.5px;
+        color:{THEME['navy']}; cursor:pointer; transition:all .12s ease;
+        margin:0;
+    }}
+    section[data-testid="stSidebar"] .stRadio [role="radiogroup"] label:hover {{
+        border-color:{THEME['blue']}; box-shadow:0 2px 8px rgba(79,70,229,.10); }}
+    /* 선택된 메뉴 */
+    section[data-testid="stSidebar"] .stRadio [role="radiogroup"]
+        label:has(input:checked) {{
+        background:{THEME['blue']}; color:#fff; border-color:{THEME['blue']};
+        box-shadow:0 4px 12px rgba(79,70,229,.28); }}
+    /* 라디오 동그라미 숨기기 */
+    section[data-testid="stSidebar"] .stRadio [role="radiogroup"]
+        label > div:first-child {{ display:none; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -574,6 +609,7 @@ def to_excel_bytes(df):
 
 
 # ============================== UI ==============================
+# ---- 헤더 배너 (칩은 사이드바 메뉴로 이동) ----
 st.markdown("""
 <div class="hero">
     <div class="hero-row">
@@ -583,33 +619,27 @@ st.markdown("""
             <p>네이버·다음·구글맵·카카오맵 리뷰를 감성·주제·개선과제로 자동 분석합니다.</p>
         </div>
     </div>
-    <div class="chips">
-        <span class="chip">📊 감성분석</span>
-        <span class="chip">🎯 주제 분석</span>
-        <span class="chip">🛠️ 개선 과제</span>
-        <span class="chip">📥 보고서 다운로드</span>
-    </div>
 </div>
 """, unsafe_allow_html=True)
 
-with st.sidebar:
-    st.header("📂 데이터 업로드")
-    st.markdown("PC 크롤러가 만든 **후기 엑셀(.xlsx)** 또는 **.csv** 를 여러 개 올려주세요.")
-    uploaded = st.file_uploader(
-        "후기 파일 선택",
-        type=["xlsx", "xls", "csv"],
-        accept_multiple_files=True,
-        label_visibility="collapsed",
-    )
-    st.divider()
-    st.subheader("ℹ️ 채널 자동 인식")
-    st.caption("파일명에 '네이버/다음/구글/카카오'가 있으면 자동 분류됩니다.")
-    st.divider()
-    st.caption("분석 전용 대시보드 · 후기 수집은 PC 크롤러에서 진행")
+# ---- 업로드 (배너 바로 아래, 메인 영역) ----
+st.markdown("""
+<div class="upload-card">
+    <div class="uc-title">📂 데이터 업로드</div>
+    <div class="uc-desc">PC 크롤러가 만든 후기 <b>엑셀(.xlsx)</b> 또는 <b>.csv</b> 를
+        여러 개 한 번에 올려주세요. 파일명으로 채널이 자동 분류됩니다.</div>
+</div>
+""", unsafe_allow_html=True)
+uploaded = st.file_uploader(
+    "후기 파일 선택",
+    type=["xlsx", "xls", "csv"],
+    accept_multiple_files=True,
+    label_visibility="collapsed",
+)
 
 if not uploaded:
     st.info(
-        "👈 왼쪽 사이드바에서 후기 파일을 업로드하면 분석이 시작됩니다.\n\n"
+        "⬆️ 위에서 후기 파일을 업로드하면 분석이 시작됩니다.\n\n"
         "예시: `네이버 블로그_2026-08-06.xlsx`, `구글맵 리뷰_2026-08-06.xlsx`"
     )
     with st.expander("💡 이 대시보드는 무엇을 하나요?"):
@@ -617,8 +647,8 @@ if not uploaded:
         - 업로드한 후기를 **긍정 / 중립 / 부정**으로 자동 분류합니다.
         - **별점이 있는 채널**(구글맵·카카오맵)은 별점을 우선 사용하고,
           별점이 없으면 **본문 단어**로 판정합니다.
-        - 채널별·감성별 **인터랙티브 차트**와 **필터 표**를 제공합니다.
-        - 결과를 **엑셀/CSV로 다운로드**할 수 있습니다.
+        - **주제 분석**으로 "후기가 주로 무슨 이야기를 하는지" 비율까지 보여줍니다.
+        - 채널별·감성별 **인터랙티브 차트**와 **개선 과제**를 제공합니다.
         """)
     st.stop()
 
@@ -666,16 +696,21 @@ if not frames:
 
 data = analyze(pd.concat(frames, ignore_index=True))
 
-with st.expander(f"📥 불러온 파일 {len(load_info)}개 보기", expanded=True):
-    st.table(pd.DataFrame(load_info, columns=["파일명", "인식된 채널", "건수"]))
-    st.caption("※ 통합 블로그 파일은 내부의 '출처'에 따라 네이버/다음으로 자동 분류됩니다.")
+# 텍스트 컬럼 준비(주제/키워드 분석용)
+data["_full"] = (data["제목"].fillna("").astype(str) + " "
+                 + data["내용"].fillna("").astype(str)).str.strip()
 
-# --- KPI ---
+# ---- 공통 집계 ----
 total = len(data)
 counts = data["감성"].value_counts().reindex(LABELS).fillna(0).astype(int)
 pos_rate = counts["긍정"] / total * 100 if total else 0
 rated = pd.to_numeric(data["별점"], errors="coerce").dropna()
 avg_star = rated.mean() if len(rated) else None
+_neg = data[data["감성"] == "부정"]
+show_cols = ["채널", "작성일", "작성자", "별점", "감성", "판정근거", "감성점수",
+             "제목", "내용", "URL"]
+today = datetime.date.today().strftime("%Y-%m-%d")
+
 
 def kpi_card(label, value, sub="", icon="", color=THEME["navy"]):
     return f"""
@@ -686,125 +721,134 @@ def kpi_card(label, value, sub="", icon="", color=THEME["navy"]):
         <div class="sub">{sub}</div>
     </div>"""
 
-_avg = f"{avg_star:.2f}" if avg_star is not None else "-"
-kpis = [
-    kpi_card("전체 후기", f"{total:,}", "건", "📝", THEME["navy"]),
-    kpi_card("긍정", f"{counts['긍정']:,}", f"{pos_rate:.1f}%", "😊", THEME["pos"]),
-    kpi_card("중립", f"{counts['중립']:,}", "건", "😐", THEME["neu"]),
-    kpi_card("부정", f"{counts['부정']:,}",
-             f"{counts['부정']/total*100:.1f}%" if total else "", "😞", THEME["neg"]),
-    kpi_card("평균 별점", _avg, "5점 만점", "⭐", THEME["blue"]),
-]
-cols = st.columns(5)
-for col, html in zip(cols, kpis):
-    col.markdown(html, unsafe_allow_html=True)
 
-st.write("")
-st.divider()
+# ============================== 사이드바 메뉴 ==============================
+with st.sidebar:
+    menu = st.radio(
+        "menu",
+        ["📊 감성 분석", "🎯 주제 분석", "🛠️ 개선 과제", "📥 보고서 다운로드"],
+        label_visibility="collapsed",
+    )
+    st.divider()
+    with st.expander(f"📥 불러온 파일 {len(load_info)}개", expanded=False):
+        st.table(pd.DataFrame(load_info, columns=["파일명", "채널", "건수"]))
+    if skipped:
+        st.caption("⚠️ 통합 파일이 있어 개별 블로그는 중복 제외됨")
+    st.divider()
+    st.caption("분석 전용 대시보드 · 후기 수집은 PC 크롤러에서 진행")
 
-# --- 차트 ---
-col_left, col_right = st.columns([1, 1.3])
-with col_left:
-    st.subheader("🎯 전체 감성 분포")
-    pie_df = pd.DataFrame({"감성": counts.index, "건수": counts.values})
-    donut = (alt.Chart(pie_df).mark_arc(innerRadius=72, stroke="#fff",
-                                        strokeWidth=2).encode(
-        theta=alt.Theta("건수:Q"),
-        color=alt.Color("감성:N",
-                        scale=alt.Scale(domain=LABELS, range=[COLOR[l] for l in LABELS]),
-                        legend=alt.Legend(title="감성", orient="bottom")),
-        tooltip=["감성", "건수"]).properties(height=320))
-    st.altair_chart(donut, use_container_width=True)
 
-with col_right:
-    st.subheader("📊 채널별 감성 분포")
-    ch_df = data.groupby(["채널", "감성"]).size().reset_index(name="건수")
-    bar = (alt.Chart(ch_df).mark_bar().encode(
-        y=alt.Y("채널:N", title=None, sort="-x"),
-        x=alt.X("건수:Q", title="건수"),
-        color=alt.Color("감성:N",
-                        scale=alt.Scale(domain=LABELS, range=[COLOR[l] for l in LABELS]),
-                        legend=alt.Legend(title="감성")),
-        order=alt.Order("감성:N"),
-        tooltip=["채널", "감성", "건수"]).properties(height=320))
-    st.altair_chart(bar, use_container_width=True)
+# ============================== ① 감성 분석 ==============================
+if menu == "📊 감성 분석":
+    _avg = f"{avg_star:.2f}" if avg_star is not None else "-"
+    kpis = [
+        kpi_card("전체 후기", f"{total:,}", "건", "📝", THEME["navy"]),
+        kpi_card("긍정", f"{counts['긍정']:,}", f"{pos_rate:.1f}%", "😊", THEME["pos"]),
+        kpi_card("중립", f"{counts['중립']:,}", "건", "😐", THEME["neu"]),
+        kpi_card("부정", f"{counts['부정']:,}",
+                 f"{counts['부정']/total*100:.1f}%" if total else "", "😞", THEME["neg"]),
+        kpi_card("평균 별점", _avg, "5점 만점", "⭐", THEME["blue"]),
+    ]
+    for col, html in zip(st.columns(5), kpis):
+        col.markdown(html, unsafe_allow_html=True)
+    st.write("")
 
-date_series = pd.to_datetime(data["작성일"], errors="coerce")
-if date_series.notna().any():
-    st.subheader("📈 월별 후기 추이")
-    tmp = data.copy()
-    tmp["_월"] = date_series.dt.to_period("M").astype(str)
-    tmp = tmp[tmp["_월"] != "NaT"]
-    trend = tmp.groupby(["_월", "감성"]).size().reset_index(name="건수")
-    line = (alt.Chart(trend).mark_bar().encode(
-        x=alt.X("_월:N", title="월"),
-        y=alt.Y("건수:Q", title="건수"),
-        color=alt.Color("감성:N",
-                        scale=alt.Scale(domain=LABELS, range=[COLOR[l] for l in LABELS])),
-        tooltip=["_월", "감성", "건수"]).properties(height=300))
-    st.altair_chart(line, use_container_width=True)
-
-st.divider()
-
-# --- 상세 표 ---
-st.subheader("📋 후기 상세 보기")
-f1, f2, f3 = st.columns([1, 1, 2])
-sel_channels = f1.multiselect("채널", sorted(data["채널"].unique()),
-                              default=sorted(data["채널"].unique()))
-sel_labels = f2.multiselect("감성", LABELS, default=LABELS)
-keyword = f3.text_input("본문 검색어", placeholder="예: 친절, 주차, 아이 …")
-
-view = data[data["채널"].isin(sel_channels) & data["감성"].isin(sel_labels)]
-if keyword.strip():
-    view = view[view["_full"].str.contains(keyword.strip(), case=False, na=False)]
-
-show_cols = ["채널", "작성일", "작성자", "별점", "감성", "판정근거", "감성점수",
-             "제목", "내용", "URL"]
-st.caption(f"필터 결과: {len(view):,}건")
-st.dataframe(
-    view[show_cols], use_container_width=True, hide_index=True, height=380,
-    column_config={
-        "URL": st.column_config.LinkColumn("URL", width="small"),
-        "내용": st.column_config.TextColumn("내용", width="large"),
-    },
-)
-
-# ============================== 분석 보고서 ==============================
-st.divider()
-st.subheader("📑 분석 보고서 (보고 자료용)")
-
-# 텍스트 컬럼 준비
-data["_full"] = (data["제목"].fillna("").astype(str) + " "
-                 + data["내용"].fillna("").astype(str)).str.strip()
-
-_total = len(data)
-_counts = data["감성"].value_counts().reindex(LABELS).fillna(0).astype(int)
-_pos_rate = round(_counts["긍정"] / _total * 100, 1) if _total else 0
-_neg = data[data["감성"] == "부정"]
-
-rep_tab1, rep_tab5, rep_tab2, rep_tab3, rep_tab4 = st.tabs(
-    ["① 플랫폼별", "② ★주제 분석", "③ 감성별 키워드·문장",
-     "④ 공통 언급", "⑤ ★개선 과제"])
-
-# --- ① 플랫폼별 ---
-with rep_tab1:
+    # 플랫폼별 요약 + 한 줄 총평
     piv = (data.groupby(["채널", "감성"]).size().unstack(fill_value=0)
            .reindex(columns=LABELS, fill_value=0))
     piv["합계"] = piv.sum(axis=1)
     piv["긍정률(%)"] = (piv["긍정"] / piv["합계"] * 100).round(1)
-    star = pd.to_numeric(data["별점"], errors="coerce")
-    avg_star = data.assign(_s=star).groupby("채널")["_s"].mean().round(2)
-    piv["평균별점"] = avg_star
+    _star = pd.to_numeric(data["별점"], errors="coerce")
+    piv["평균별점"] = data.assign(_s=_star).groupby("채널")["_s"].mean().round(2)
     piv = piv.sort_values("긍정률(%)", ascending=False)
-    tone = ("매우 긍정적" if _pos_rate >= 70 else "대체로 긍정적"
-            if _pos_rate >= 50 else "긍·부정 혼재" if _pos_rate >= 30 else "개선 필요")
-    st.info(f"**한 줄 총평** — 전체 {_total}건 중 긍정 {_counts['긍정']}건"
-            f"({_pos_rate}%)으로, 방문객 반응은 **'{tone}'**입니다.")
+    tone = ("매우 긍정적" if pos_rate >= 70 else "대체로 긍정적"
+            if pos_rate >= 50 else "긍·부정 혼재" if pos_rate >= 30 else "개선 필요")
+    st.info(f"**한 줄 총평** — 전체 {total}건 중 긍정 {counts['긍정']}건"
+            f"({pos_rate:.1f}%)으로, 방문객 반응은 **'{tone}'**입니다.")
+
+    st.divider()
+    col_left, col_right = st.columns([1, 1.3])
+    with col_left:
+        st.subheader("🎯 전체 감성 분포")
+        pie_df = pd.DataFrame({"감성": counts.index, "건수": counts.values})
+        donut = (alt.Chart(pie_df).mark_arc(innerRadius=72, stroke="#fff",
+                                            strokeWidth=2).encode(
+            theta=alt.Theta("건수:Q"),
+            color=alt.Color("감성:N",
+                            scale=alt.Scale(domain=LABELS, range=[COLOR[l] for l in LABELS]),
+                            legend=alt.Legend(title="감성", orient="bottom")),
+            tooltip=["감성", "건수"]).properties(height=320))
+        st.altair_chart(donut, use_container_width=True)
+    with col_right:
+        st.subheader("📊 채널별 감성 분포")
+        ch_df = data.groupby(["채널", "감성"]).size().reset_index(name="건수")
+        bar = (alt.Chart(ch_df).mark_bar().encode(
+            y=alt.Y("채널:N", title=None, sort="-x"),
+            x=alt.X("건수:Q", title="건수"),
+            color=alt.Color("감성:N",
+                            scale=alt.Scale(domain=LABELS, range=[COLOR[l] for l in LABELS]),
+                            legend=alt.Legend(title="감성")),
+            order=alt.Order("감성:N"),
+            tooltip=["채널", "감성", "건수"]).properties(height=320))
+        st.altair_chart(bar, use_container_width=True)
+
+    date_series = pd.to_datetime(data["작성일"], errors="coerce")
+    if date_series.notna().any():
+        st.subheader("📈 월별 후기 추이")
+        tmp = data.copy()
+        tmp["_월"] = date_series.dt.to_period("M").astype(str)
+        tmp = tmp[tmp["_월"] != "NaT"]
+        trend = tmp.groupby(["_월", "감성"]).size().reset_index(name="건수")
+        line = (alt.Chart(trend).mark_bar().encode(
+            x=alt.X("_월:N", title="월"),
+            y=alt.Y("건수:Q", title="건수"),
+            color=alt.Color("감성:N",
+                            scale=alt.Scale(domain=LABELS, range=[COLOR[l] for l in LABELS])),
+            tooltip=["_월", "감성", "건수"]).properties(height=300))
+        st.altair_chart(line, use_container_width=True)
+
+    st.divider()
+    st.subheader("📋 플랫폼별 상세 & 후기 검색")
     st.dataframe(piv, use_container_width=True)
 
-# --- ② ★주제 분석 (방문객이 주로 하는 이야기) ---
-with rep_tab5:
-    st.markdown("#### 🎯 방문객이 주로 이야기하는 내용")
+    f1, f2, f3 = st.columns([1, 1, 2])
+    sel_channels = f1.multiselect("채널", sorted(data["채널"].unique()),
+                                  default=sorted(data["채널"].unique()))
+    sel_labels = f2.multiselect("감성", LABELS, default=LABELS)
+    keyword = f3.text_input("본문 검색어", placeholder="예: 친절, 주차, 아이 …")
+    view = data[data["채널"].isin(sel_channels) & data["감성"].isin(sel_labels)]
+    if keyword.strip():
+        view = view[view["_full"].str.contains(keyword.strip(), case=False, na=False)]
+    st.caption(f"필터 결과: {len(view):,}건")
+    st.dataframe(
+        view[show_cols], use_container_width=True, hide_index=True, height=380,
+        column_config={
+            "URL": st.column_config.LinkColumn("URL", width="small"),
+            "내용": st.column_config.TextColumn("내용", width="large"),
+        },
+    )
+
+    # 감성별 키워드 & 대표 문장
+    st.divider()
+    st.subheader("🔑 감성별 핵심 키워드 & 대표 문장")
+    for lab in LABELS:
+        sub = data[data["감성"] == lab]
+        if len(sub) == 0:
+            continue
+        emoji = {"긍정": "😊", "중립": "😐", "부정": "😞"}[lab]
+        with st.expander(f"{emoji} {lab} ({len(sub)}건)", expanded=(lab == "긍정")):
+            kws = top_keywords(sub["_full"].tolist(), n=15)
+            if kws:
+                st.markdown("**핵심 키워드:** "
+                            + ", ".join(f"`{w}`({c})" for w, c in kws))
+            pairs = list(zip(sub.get("감성점수", [0] * len(sub)), sub["_full"].tolist()))
+            for s in rep_sentences(pairs, n=5):
+                st.markdown(f"> {s}")
+
+
+# ============================== ② 주제 분석 ==============================
+elif menu == "🎯 주제 분석":
+    st.subheader("🎯 방문객이 주로 이야기하는 내용")
     topics = analyze_topics(data)
     if not topics:
         st.warning("주제로 분류된 후기가 없습니다.")
@@ -812,13 +856,12 @@ with rep_tab5:
         top = topics[0]
         st.success(f"**핵심 발견** — 후기의 **{top['비율']}%**가 "
                    f"**'{top['주제']}'**을(를) 언급하며 가장 큰 화제입니다.")
-        # 주제별 비율 막대차트
         tdf = pd.DataFrame([{"주제": t["주제"], "건수": t["건수"],
                              "비율(%)": t["비율"]} for t in topics])
         chart = (alt.Chart(tdf).mark_bar(color="#4F46E5", cornerRadiusEnd=4).encode(
             x=alt.X("건수:Q", title="언급 후기 수"),
             y=alt.Y("주제:N", sort="-x", title=None),
-            tooltip=["주제", "건수", "비율(%)"]).properties(height=340))
+            tooltip=["주제", "건수", "비율(%)"]).properties(height=360))
         st.altair_chart(chart, use_container_width=True)
 
         st.markdown("##### 주제별 상세")
@@ -831,57 +874,28 @@ with rep_tab5:
                                 + ", ".join(f"`{p}`" for p in t["핵심문구"]))
                 if t["대표후기"]:
                     st.markdown(f"**대표 후기:** \"{t['대표후기']}\"")
-        # 주제 분석 CSV 다운로드
-        tdf_full = pd.DataFrame([{
-            "주제": t["주제"], "건수": t["건수"], "비율(%)": t["비율"],
-            "감성분포": senti_str(t["감성분포"]),
-            "핵심문구": " / ".join(t["핵심문구"]), "대표후기": t["대표후기"],
-        } for t in topics])
-        st.download_button(
-            "⬇️ 주제 분석 표(CSV) 다운로드",
-            data=tdf_full.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"주제분석_{datetime.date.today()}.csv",
-            mime="text/csv")
 
-# --- ③ 감성별 키워드 & 대표 문장 ---
-with rep_tab2:
-    for lab in LABELS:
-        sub = data[data["감성"] == lab]
-        if len(sub) == 0:
-            continue
-        emoji = {"긍정": "😊", "중립": "😐", "부정": "😞"}[lab]
-        st.markdown(f"#### {emoji} {lab} ({len(sub)}건)")
-        kws = top_keywords(sub["_full"].tolist(), n=15)
-        if kws:
-            st.markdown("**핵심 키워드:** "
-                        + ", ".join(f"`{w}`({c})" for w, c in kws))
-        pairs = list(zip(sub.get("감성점수", [0] * len(sub)), sub["_full"].tolist()))
-        sents = rep_sentences(pairs, n=5)
-        if sents:
-            st.markdown("**대표 문장:**")
-            for s in sents:
-                st.markdown(f"> {s}")
+        # 공통 언급 키워드
         st.divider()
+        st.subheader("🔑 전체 공통 언급 키워드")
+        common = top_keywords(data["_full"].tolist(), n=15)
+        if common:
+            kw_df = pd.DataFrame(common, columns=["키워드", "언급 문서 수"])
+            cc1, cc2 = st.columns([1, 1])
+            with cc1:
+                st.dataframe(kw_df, use_container_width=True, hide_index=True, height=360)
+            with cc2:
+                kc = (alt.Chart(kw_df).mark_bar(color="#4F46E5",
+                                                cornerRadiusEnd=4).encode(
+                    x=alt.X("언급 문서 수:Q"),
+                    y=alt.Y("키워드:N", sort="-x"),
+                    tooltip=["키워드", "언급 문서 수"]).properties(height=360))
+                st.altair_chart(kc, use_container_width=True)
 
-# --- ③ 공통 언급 ---
-with rep_tab3:
-    common = top_keywords(data["_full"].tolist(), n=15)
-    st.markdown("#### 🔑 후기가 공통적으로 자주 언급한 키워드")
-    if common:
-        kw_df = pd.DataFrame(common, columns=["키워드", "언급 문서 수"])
-        cc1, cc2 = st.columns([1, 1])
-        with cc1:
-            st.dataframe(kw_df, use_container_width=True, hide_index=True, height=360)
-        with cc2:
-            chart = (alt.Chart(kw_df).mark_bar(color="#4F46E5", cornerRadiusEnd=4).encode(
-                x=alt.X("언급 문서 수:Q"),
-                y=alt.Y("키워드:N", sort="-x"),
-                tooltip=["키워드", "언급 문서 수"]).properties(height=360))
-            st.altair_chart(chart, use_container_width=True)
 
-# --- ④ 개선 과제 ---
-with rep_tab4:
-    st.markdown("#### 🛠️ 개선 과제 (부정 후기 주제별 정리)")
+# ============================== ③ 개선 과제 ==============================
+elif menu == "🛠️ 개선 과제":
+    st.subheader("🛠️ 개선 과제 (부정 후기 주제별 정리)")
     if len(_neg) == 0:
         st.success("부정 후기가 없어 도출된 개선 과제가 없습니다. 👍")
     else:
@@ -897,39 +911,64 @@ with rep_tab4:
             top_theme, top_cnt = improvements[0][0], improvements[0][1]
             st.error(f"**최우선 개선 과제: '{top_theme}'** "
                      f"(부정 {top_cnt}건, 가장 많이 지적됨)")
-            imp_rows = []
             for i, (theme, cnt, samples, advice) in enumerate(improvements, 1):
                 with st.expander(f"{i}. {theme}  —  부정 {cnt}건", expanded=(i == 1)):
                     for s in samples:
                         st.markdown(f"- 후기: \"{s}\"")
                     st.success(f"✅ 개선 방향: {advice}")
-                imp_rows.append({"우선순위": i, "개선주제": theme, "부정건수": cnt,
-                                 "대표후기": " / ".join(samples), "개선방향": advice})
-            # 개선 과제 CSV 다운로드
-            imp_df = pd.DataFrame(imp_rows)
-            st.download_button(
-                "⬇️ 개선 과제 표(CSV) 다운로드",
-                data=imp_df.to_csv(index=False).encode("utf-8-sig"),
-                file_name=f"개선과제_{datetime.date.today()}.csv",
-                mime="text/csv",
-            )
 
-# --- 다운로드 ---
-st.divider()
-st.subheader("💾 결과 다운로드")
-today = datetime.date.today().strftime("%Y-%m-%d")
-d1, d2 = st.columns(2)
-d1.download_button(
-    "⬇️ 엑셀(.xlsx) 다운로드",
-    data=to_excel_bytes(view[show_cols]),
-    file_name=f"감성분석_결과_{today}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    use_container_width=True,
-)
-d2.download_button(
-    "⬇️ CSV 다운로드",
-    data=view[show_cols].to_csv(index=False).encode("utf-8-sig"),
-    file_name=f"감성분석_결과_{today}.csv",
-    mime="text/csv",
-    use_container_width=True,
-)
+
+# ============================== ④ 보고서 다운로드 ==============================
+elif menu == "📥 보고서 다운로드":
+    st.subheader("📥 보고서 다운로드")
+    st.caption("분석 결과를 파일로 내려받아 보고 자료에 바로 활용하세요. "
+               "(모두 UTF-8, 엑셀에서 한글 정상)")
+
+    # 1) 전체 감성분석 결과
+    st.markdown("##### 📊 전체 감성분석 결과")
+    d1, d2 = st.columns(2)
+    d1.download_button(
+        "⬇️ 엑셀(.xlsx)",
+        data=to_excel_bytes(data[show_cols]),
+        file_name=f"감성분석_결과_{today}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True)
+    d2.download_button(
+        "⬇️ CSV",
+        data=data[show_cols].to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"감성분석_결과_{today}.csv",
+        mime="text/csv", use_container_width=True)
+
+    # 2) 주제 분석
+    st.markdown("##### 🎯 주제 분석 표")
+    _topics = analyze_topics(data)
+    if _topics:
+        tdf_full = pd.DataFrame([{
+            "주제": t["주제"], "건수": t["건수"], "비율(%)": t["비율"],
+            "감성분포": senti_str(t["감성분포"]),
+            "핵심문구": " / ".join(t["핵심문구"]), "대표후기": t["대표후기"],
+        } for t in _topics])
+        st.download_button(
+            "⬇️ 주제 분석 CSV",
+            data=tdf_full.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"주제분석_{today}.csv", mime="text/csv")
+    else:
+        st.caption("주제로 분류된 후기가 없습니다.")
+
+    # 3) 개선 과제
+    st.markdown("##### 🛠️ 개선 과제 표")
+    if len(_neg) > 0:
+        _imp = analyze_improvements(_neg)
+        if _imp:
+            imp_df = pd.DataFrame([{
+                "우선순위": i, "개선주제": th, "부정건수": cnt,
+                "대표후기": " / ".join(sm), "개선방향": adv}
+                for i, (th, cnt, sm, adv) in enumerate(_imp, 1)])
+            st.download_button(
+                "⬇️ 개선 과제 CSV",
+                data=imp_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"개선과제_{today}.csv", mime="text/csv")
+        else:
+            st.caption("사전 정의 주제에 매칭된 개선 과제가 없습니다.")
+    else:
+        st.caption("부정 후기가 없어 개선 과제가 없습니다. 👍")
