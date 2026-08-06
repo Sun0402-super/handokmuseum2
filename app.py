@@ -23,6 +23,94 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ===================== 은은한 인디고 테마 (Style C) =====================
+#  슬레이트(#1E293B~#334155) + 인디고(#4F46E5) 포인트
+THEME = {
+    "navy": "#1E293B", "blue": "#4F46E5", "sky": "#6366F1",
+    "bg": "#F6F7FB", "card": "#FFFFFF", "text": "#1E293B",
+    "pos": "#4F46E5", "neu": "#94A3B8", "neg": "#F43F5E",
+    "slate2": "#334155", "chip": "#EEF0FE", "chiptext": "#4F46E5",
+}
+st.markdown(f"""
+<style>
+    /* 전체 배경 & 폰트 */
+    .stApp {{ background: {THEME['bg']}; }}
+    html, body, [class*="css"] {{
+        font-family: 'Pretendard','Malgun Gothic','Segoe UI',sans-serif;
+        color: {THEME['text']};
+    }}
+    /* 본문 여백 넓히기 (읽기 편하게) */
+    .block-container {{ padding-top: 1.2rem; padding-bottom: 2rem;
+                        max-width: 1300px; }}
+
+    /* ---- 헤더 배너 (Style C: 은은한 슬레이트) ---- */
+    .hero {{
+        background: linear-gradient(135deg, {THEME['navy']} 0%,
+                    {THEME['slate2']} 100%);
+        padding: 30px 36px; border-radius: 20px; margin-bottom: 22px;
+        color: #fff;
+    }}
+    .hero-row {{ display:flex; align-items:center; gap:14px; }}
+    .hero-logo {{
+        width:52px; height:52px; border-radius:14px; flex:none;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.12);
+        display:flex; align-items:center; justify-content:center;
+        font-size:26px;
+    }}
+    .hero h1 {{ margin: 0; font-size: 26px; font-weight: 800;
+                letter-spacing: -0.4px; color:#F8FAFC; }}
+    .hero p  {{ margin: 5px 0 0; font-size: 14px; color:#CBD5E1; }}
+    .hero .chips {{ display:flex; gap:8px; margin-top:18px; flex-wrap:wrap; }}
+    .hero .chip {{
+        background: rgba(255,255,255,0.10); color:#E2E8F0;
+        border: 1px solid rgba(255,255,255,0.10);
+        padding:6px 12px; border-radius:8px;
+        font-size:12px; font-weight:600;
+    }}
+
+    /* ---- KPI 카드 ---- */
+    .kpi {{
+        background: {THEME['card']}; border-radius: 16px; padding: 18px 20px;
+        box-shadow: 0 4px 16px rgba(30,111,217,0.10);
+        border: 1px solid #E8F0FB; height: 100%;
+        transition: transform .15s ease, box-shadow .15s ease;
+    }}
+    .kpi:hover {{ transform: translateY(-3px);
+                  box-shadow: 0 10px 24px rgba(30,111,217,0.18); }}
+    .kpi .label {{ font-size: 13px; color:#5B7089; font-weight:600; }}
+    .kpi .value {{ font-size: 30px; font-weight: 800; margin-top: 4px;
+                   line-height:1.1; }}
+    .kpi .sub   {{ font-size: 12.5px; color:#8AA0B6; margin-top: 3px; }}
+    .kpi .icon  {{ float:right; font-size: 26px; opacity:.85; }}
+
+    /* ---- 섹션 제목 ---- */
+    h2, h3 {{ color: {THEME['navy']}; font-weight: 700; }}
+    [data-testid="stHeading"] {{ color: {THEME['navy']}; }}
+
+    /* ---- 탭 디자인 ---- */
+    .stTabs [data-baseweb="tab-list"] {{ gap: 6px; }}
+    .stTabs [data-baseweb="tab"] {{
+        background: #EAF2FD; border-radius: 10px 10px 0 0;
+        padding: 9px 16px; font-weight: 600; color: {THEME['navy']};
+    }}
+    .stTabs [aria-selected="true"] {{
+        background: {THEME['blue']}; color: #fff !important;
+    }}
+
+    /* 다운로드/버튼 */
+    .stDownloadButton button, .stButton button {{
+        background: {THEME['blue']}; color:#fff; border:none;
+        border-radius: 10px; font-weight:600;
+    }}
+    .stDownloadButton button:hover, .stButton button:hover {{
+        background: {THEME['navy']};
+    }}
+    /* 사이드바 */
+    section[data-testid="stSidebar"] {{ background:#EAF2FD; }}
+</style>
+""", unsafe_allow_html=True)
+
 # ----------------------- 한국어 감성 사전 -----------------------
 POSITIVE_WORDS = {
     # 기본 감정
@@ -70,7 +158,7 @@ NEGATIVE_WORDS = {
 }
 NEGATORS = ["안", "못", "없", "않", "말고", "빼고"]
 LABELS = ["긍정", "중립", "부정"]
-COLOR = {"긍정": "#4CAF50", "중립": "#9E9E9E", "부정": "#F44336"}
+COLOR = {"긍정": "#4F46E5", "중립": "#94A3B8", "부정": "#F43F5E"}
 
 # ----------------------- 보고서용: 불용어 & 개선 과제 테마 -----------------------
 STOPWORDS = set("""
@@ -486,8 +574,23 @@ def to_excel_bytes(df):
 
 
 # ============================== UI ==============================
-st.title("🏛️ 한독의약박물관 관람 후기 감성분석")
-st.caption("네이버·다음 블로그, 구글맵·카카오맵 리뷰를 한 곳에서 분석합니다.")
+st.markdown("""
+<div class="hero">
+    <div class="hero-row">
+        <div class="hero-logo">🏛️</div>
+        <div>
+            <h1>한독의약박물관 후기 분석</h1>
+            <p>네이버·다음·구글맵·카카오맵 리뷰를 감성·주제·개선과제로 자동 분석합니다.</p>
+        </div>
+    </div>
+    <div class="chips">
+        <span class="chip">📊 감성분석</span>
+        <span class="chip">🎯 주제 분석</span>
+        <span class="chip">🛠️ 개선 과제</span>
+        <span class="chip">📥 보고서 다운로드</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("📂 데이터 업로드")
@@ -574,30 +677,47 @@ pos_rate = counts["긍정"] / total * 100 if total else 0
 rated = pd.to_numeric(data["별점"], errors="coerce").dropna()
 avg_star = rated.mean() if len(rated) else None
 
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("전체 후기", f"{total:,}건")
-c2.metric("😊 긍정", f"{counts['긍정']:,}", f"{pos_rate:.1f}%")
-c3.metric("😐 중립", f"{counts['중립']:,}")
-c4.metric("😞 부정", f"{counts['부정']:,}")
-c5.metric("⭐ 평균 별점", f"{avg_star:.2f}" if avg_star is not None else "-")
+def kpi_card(label, value, sub="", icon="", color=THEME["navy"]):
+    return f"""
+    <div class="kpi">
+        <span class="icon">{icon}</span>
+        <div class="label">{label}</div>
+        <div class="value" style="color:{color}">{value}</div>
+        <div class="sub">{sub}</div>
+    </div>"""
 
+_avg = f"{avg_star:.2f}" if avg_star is not None else "-"
+kpis = [
+    kpi_card("전체 후기", f"{total:,}", "건", "📝", THEME["navy"]),
+    kpi_card("긍정", f"{counts['긍정']:,}", f"{pos_rate:.1f}%", "😊", THEME["pos"]),
+    kpi_card("중립", f"{counts['중립']:,}", "건", "😐", THEME["neu"]),
+    kpi_card("부정", f"{counts['부정']:,}",
+             f"{counts['부정']/total*100:.1f}%" if total else "", "😞", THEME["neg"]),
+    kpi_card("평균 별점", _avg, "5점 만점", "⭐", THEME["blue"]),
+]
+cols = st.columns(5)
+for col, html in zip(cols, kpis):
+    col.markdown(html, unsafe_allow_html=True)
+
+st.write("")
 st.divider()
 
 # --- 차트 ---
 col_left, col_right = st.columns([1, 1.3])
 with col_left:
-    st.subheader("전체 감성 분포")
+    st.subheader("🎯 전체 감성 분포")
     pie_df = pd.DataFrame({"감성": counts.index, "건수": counts.values})
-    donut = (alt.Chart(pie_df).mark_arc(innerRadius=70).encode(
+    donut = (alt.Chart(pie_df).mark_arc(innerRadius=72, stroke="#fff",
+                                        strokeWidth=2).encode(
         theta=alt.Theta("건수:Q"),
         color=alt.Color("감성:N",
                         scale=alt.Scale(domain=LABELS, range=[COLOR[l] for l in LABELS]),
-                        legend=alt.Legend(title="감성")),
+                        legend=alt.Legend(title="감성", orient="bottom")),
         tooltip=["감성", "건수"]).properties(height=320))
     st.altair_chart(donut, use_container_width=True)
 
 with col_right:
-    st.subheader("채널별 감성 분포")
+    st.subheader("📊 채널별 감성 분포")
     ch_df = data.groupby(["채널", "감성"]).size().reset_index(name="건수")
     bar = (alt.Chart(ch_df).mark_bar().encode(
         y=alt.Y("채널:N", title=None, sort="-x"),
@@ -611,7 +731,7 @@ with col_right:
 
 date_series = pd.to_datetime(data["작성일"], errors="coerce")
 if date_series.notna().any():
-    st.subheader("월별 후기 추이")
+    st.subheader("📈 월별 후기 추이")
     tmp = data.copy()
     tmp["_월"] = date_series.dt.to_period("M").astype(str)
     tmp = tmp[tmp["_월"] != "NaT"]
@@ -695,7 +815,7 @@ with rep_tab5:
         # 주제별 비율 막대차트
         tdf = pd.DataFrame([{"주제": t["주제"], "건수": t["건수"],
                              "비율(%)": t["비율"]} for t in topics])
-        chart = (alt.Chart(tdf).mark_bar(color="#5B8FF9").encode(
+        chart = (alt.Chart(tdf).mark_bar(color="#4F46E5", cornerRadiusEnd=4).encode(
             x=alt.X("건수:Q", title="언급 후기 수"),
             y=alt.Y("주제:N", sort="-x", title=None),
             tooltip=["주제", "건수", "비율(%)"]).properties(height=340))
@@ -753,7 +873,7 @@ with rep_tab3:
         with cc1:
             st.dataframe(kw_df, use_container_width=True, hide_index=True, height=360)
         with cc2:
-            chart = (alt.Chart(kw_df).mark_bar(color="#5B8FF9").encode(
+            chart = (alt.Chart(kw_df).mark_bar(color="#4F46E5", cornerRadiusEnd=4).encode(
                 x=alt.X("언급 문서 수:Q"),
                 y=alt.Y("키워드:N", sort="-x"),
                 tooltip=["키워드", "언급 문서 수"]).properties(height=360))
