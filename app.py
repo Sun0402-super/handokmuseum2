@@ -418,8 +418,12 @@ def standardize(df, channel):
             if mapped:
                 ch = mapped
 
+        # 장소 컬럼(카카오맵: 한독의약박물관(음성)/(서울)) 보존. 없으면 채널명 사용
+        place = _get(r, "장소") or ch
+
         recs.append({
             "채널": ch,
+            "장소": place,
             "작성일": _get(r, "작성일"),
             "작성자": _get(r, "작성자", "블로그명", "블로그ID"),
             "별점": r["별점"] if "별점" in r and pd.notna(r["별점"]) else None,
@@ -712,19 +716,15 @@ if not frames:
     st.warning("읽을 수 있는 데이터가 없습니다. 파일 형식을 확인해주세요.")
     st.stop()
 
-data = analyze(pd.concat(frames, ignore_index=True))
+data_all = analyze(pd.concat(frames, ignore_index=True))
 
 # 텍스트 컬럼 준비(주제/키워드 분석용)
-data["_full"] = (data["제목"].fillna("").astype(str) + " "
-                 + data["내용"].fillna("").astype(str)).str.strip()
+data_all["_full"] = (data_all["제목"].fillna("").astype(str) + " "
+                     + data_all["내용"].fillna("").astype(str)).str.strip()
 
-# ---- 공통 집계 ----
-total = len(data)
-counts = data["감성"].value_counts().reindex(LABELS).fillna(0).astype(int)
-pos_rate = counts["긍정"] / total * 100 if total else 0
-rated = pd.to_numeric(data["별점"], errors="coerce").dropna()
-avg_star = rated.mean() if len(rated) else None
-_neg = data[data["감성"] == "부정"]
+# 장소 목록(카카오맵처럼 음성/서울 등으로 나뉜 경우만 의미 있음. 없으면 채널명)
+place_options = ["전체"] + sorted(data_all["장소"].dropna().unique().tolist())
+
 show_cols = ["채널", "작성일", "작성자", "별점", "감성", "판정근거", "감성점수",
              "제목", "내용", "URL"]
 today = datetime.date.today().strftime("%Y-%m-%d")
@@ -748,6 +748,20 @@ with st.sidebar:
         label_visibility="collapsed",
     )
     st.divider()
+
+    # ---- 장소별 필터 (카카오맵 음성/서울처럼 여러 장소가 있을 때만 표시) ----
+    selected_place = "전체"
+    if len(place_options) > 2:   # "전체" 포함 실제 장소가 2개 이상일 때만 노출
+        st.markdown("**📍 장소 필터**")
+        selected_place = st.selectbox(
+            "장소 필터", place_options, index=0, label_visibility="collapsed",
+            help="특정 장소를 선택하면 모든 메뉴(감성분석·주제분석·개선과제·보고서)가 "
+                 "그 장소 데이터만 반영해 보여줍니다.",
+        )
+        if selected_place != "전체":
+            st.caption(f"현재 '{selected_place}' 데이터만 보고 있어요.")
+        st.divider()
+
     with st.expander(f"📥 불러온 파일 {len(load_info)}개", expanded=False):
         st.table(pd.DataFrame(load_info, columns=["파일명", "채널", "건수"]))
     if skipped:
@@ -755,8 +769,35 @@ with st.sidebar:
     st.divider()
     st.caption("분석 전용 대시보드 · 후기 수집은 PC 크롤러에서 진행")
 
+# ---- 필터 적용: 선택된 장소로 data 좁히기 (전체 메뉴가 이 data 를 사용) ----
+data = (data_all if selected_place == "전체"
+        else data_all[data_all["장소"] == selected_place]).reset_index(drop=True)
+
+# ---- 공통 집계 (필터 반영된 data 기준) ----
+total = len(data)
+counts = data["감성"].value_counts().reindex(LABELS).fillna(0).astype(int)
+pos_rate = counts["긍정"] / total * 100 if total else 0
+rated = pd.to_numeric(data["별점"], errors="coerce").dropna()
+avg_star = rated.mean() if len(rated) else None
+_neg = data[data["감성"] == "부정"]
+
+if selected_place != "전체" and total == 0:
+    st.warning(f"'{selected_place}'에 해당하는 후기가 없습니다. "
+               "사이드바에서 다른 장소를 선택해 주세요.")
+    st.stop()
+
 
 # ============================== ① 감성 분석 ==============================
+# 장소 필터가 적용된 상태면, 어느 메뉴를 보든 상단에 안내 배지 표시
+if selected_place != "전체":
+    st.markdown(f"""
+    <div style="display:inline-block;background:{THEME['chip']};
+                color:{THEME['blue']};padding:6px 14px;border-radius:20px;
+                font-size:12.5px;font-weight:700;margin-bottom:12px;">
+        📍 장소 필터 적용 중: {selected_place} ({total}건)
+    </div>
+    """, unsafe_allow_html=True)
+
 if menu == "📊 감성 분석":
     _avg = f"{avg_star:.2f}" if avg_star is not None else "-"
     kpis = [
@@ -913,27 +954,54 @@ elif menu == "🎯 주제 분석":
 
 # ============================== ③ 개선 과제 ==============================
 elif menu == "🛠️ 개선 과제":
-    st.subheader("🛠️ 개선 과제 (부정 후기 주제별 정리)")
+    st.subheader("🛠️ 개선 과제 (부정 후기 장소별 · 주제별 정리)")
+
     if len(_neg) == 0:
         st.success("부정 후기가 없어 도출된 개선 과제가 없습니다. 👍")
     else:
-        improvements = analyze_improvements(_neg)
-        if not improvements:
-            st.warning("부정 후기가 있으나 사전 정의된 주제에 매칭되지 않았습니다. "
-                       "아래 부정 대표 문장을 직접 검토해 주세요.")
-            pairs = list(zip(_neg.get("감성점수", [0] * len(_neg)),
-                             _neg["_full"].tolist()))
-            for s in rep_sentences(pairs, n=5):
-                st.markdown(f"> {s}")
-        else:
-            top_theme, top_cnt = improvements[0][0], improvements[0][1]
+        # '장소' 컬럼에 값이 2개 이상이면(예: 음성/서울) 장소별로 탭을 나눠 표시
+        has_place = "장소" in _neg.columns and _neg["장소"].nunique() > 1
+
+        def render_improvements(sub_neg, key_prefix=""):
+            if len(sub_neg) == 0:
+                st.caption("이 장소는 부정 후기가 없습니다. 👍")
+                return
+            imps = analyze_improvements(sub_neg)
+            if not imps:
+                st.warning("사전 정의된 주제에 매칭되지 않았습니다. "
+                           "아래 부정 대표 문장을 직접 검토해 주세요.")
+                pairs = list(zip(sub_neg.get("감성점수", [0] * len(sub_neg)),
+                                 sub_neg["_full"].tolist()))
+                for s in rep_sentences(pairs, n=5):
+                    st.markdown(f"> {s}")
+                return
+            top_theme, top_cnt = imps[0][0], imps[0][1]
             st.error(f"**최우선 개선 과제: '{top_theme}'** "
                      f"(부정 {top_cnt}건, 가장 많이 지적됨)")
-            for i, (theme, cnt, samples, advice) in enumerate(improvements, 1):
-                with st.expander(f"{i}. {theme}  —  부정 {cnt}건", expanded=(i == 1)):
+            for i, (theme, cnt, samples, advice) in enumerate(imps, 1):
+                label = (f"[{key_prefix}] {i}. {theme}  —  부정 {cnt}건" if key_prefix
+                        else f"{i}. {theme}  —  부정 {cnt}건")
+                with st.expander(label, expanded=(i == 1)):
                     for s in samples:
                         st.markdown(f"- 후기: \"{s}\"")
                     st.success(f"✅ 개선 방향: {advice}")
+
+        if has_place:
+            # 사이드바에서 특정 장소를 아직 안 골랐고(전체 보기),
+            # 장소가 여러 개 섞여 있을 때만 탭으로 나눠 보여줌
+            places = sorted(_neg["장소"].unique())
+            place_tabs = st.tabs([f"📍 {p}" for p in places])
+            for tab, place in zip(place_tabs, places):
+                with tab:
+                    sub = _neg[_neg["장소"] == place]
+                    st.caption(f"부정 후기 {len(sub)}건")
+                    render_improvements(sub, key_prefix=place)
+        else:
+            # ★ 탭 자동 선택: 사이드바 장소 필터로 이미 한 장소만 남았거나
+            #   원래 장소 구분이 없는 데이터라 탭 없이 바로 내용을 보여줌
+            if selected_place != "전체":
+                st.info(f"📍 사이드바 필터 적용 중: **{selected_place}**")
+            render_improvements(_neg)
 
 
 # ============================== ④ 보고서 다운로드 ==============================
@@ -973,15 +1041,23 @@ elif menu == "📥 보고서 다운로드":
     else:
         st.caption("주제로 분류된 후기가 없습니다.")
 
-    # 3) 개선 과제
+    # 3) 개선 과제 (장소별로 나뉘어 있으면 '장소' 컬럼 포함)
     st.markdown("##### 🛠️ 개선 과제 표")
     if len(_neg) > 0:
-        _imp = analyze_improvements(_neg)
-        if _imp:
-            imp_df = pd.DataFrame([{
-                "우선순위": i, "개선주제": th, "부정건수": cnt,
-                "대표후기": " / ".join(sm), "개선방향": adv}
-                for i, (th, cnt, sm, adv) in enumerate(_imp, 1)])
+        has_place_dl = "장소" in _neg.columns and _neg["장소"].nunique() > 1
+        groups = (list(_neg.groupby("장소")) if has_place_dl else [("전체", _neg)])
+
+        imp_rows = []
+        for place_name, place_df in groups:
+            _imp = analyze_improvements(place_df)
+            for i, (th, cnt, sm, adv) in enumerate(_imp, 1):
+                imp_rows.append({
+                    "장소": place_name, "우선순위": i, "개선주제": th,
+                    "부정건수": cnt, "대표후기": " / ".join(sm), "개선방향": adv,
+                })
+
+        if imp_rows:
+            imp_df = pd.DataFrame(imp_rows)
             st.download_button(
                 "⬇️ 개선 과제 CSV",
                 data=imp_df.to_csv(index=False).encode("utf-8-sig"),
