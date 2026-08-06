@@ -403,13 +403,109 @@ def _source_to_channel(src):
     return None
 
 
-def standardize(df, channel):
+# ----------------------- 실제 방문 장소 판정 -----------------------
+# 장소 필터는 수집 채널(네이버/구글/카카오)이 아니라 실제 방문 지점 기준입니다.
+# UI에는 항상 "전체 / 음성 / 서울"만 표시합니다.
+SEOUL_URL_HINTS = [
+    "place.map.kakao.com/1584706006",  # 카카오맵: 한독의약박물관 서울 후기
+]
+EUMSEONG_URL_HINTS = [
+    # 음성 카카오맵 장소 ID를 확인하면 여기에 추가하세요.
+]
+
+SEOUL_STRONG = [
+    "한독의약박물관 서울", "한독 박물관 서울", "한독뮤지엄 서울", "서울 한독", "서울관",
+    "한독퓨처콤플렉스", "퓨처콤플렉스", "future complex", "강남", "강남구",
+    "논현", "논현동", "서울특별시", "서울시", "서울", "신논현", "언주역", "역삼"
+]
+SEOUL_CONTEXT = [
+    "도심", "빌딩", "사옥", "복합문화공간", "백신", "제약사옥", "라운지", "전시관 서울"
+]
+EUMSEONG_STRONG = [
+    "한독의약박물관 음성", "한독 박물관 음성", "음성 한독", "음성관", "충북", "충청북도",
+    "음성군", "대소면", "대풍산단", "대풍산업단지", "한독약품 음성", "한독 음성", "음성"
+]
+EUMSEONG_CONTEXT = [
+    "생명갤러리", "약초원", "의약유물", "야외", "넓은", "공장", "견학", "어린이 체험",
+    "가족 체험", "충청", "충북 음성"
+]
+
+
+def _loc_score(text, strong, context):
+    t = str(text).lower()
+    score = 0
+    for k in strong:
+        if k.lower() in t:
+            score += 3
+    for k in context:
+        if k.lower() in t:
+            score += 1
+    return score
+
+
+def _normalize_known_place(raw_place):
+    p = str(raw_place or "")
+    if not p.strip():
+        return None
+    if any(k in p for k in ["서울", "강남", "논현", "퓨처콤플렉스"]):
+        return "서울"
+    if any(k in p for k in ["음성", "충북", "충청북도", "대소", "생명갤러리", "약초원"]):
+        return "음성"
+    return None
+
+
+def classify_visit_place(title="", text="", url="", raw_place="", channel="", filename=""):
+    """
+    후기 업로드 사이트가 아니라 실제 방문 지점을 음성/서울로 판정합니다.
+    반환값: (장소, 판정근거, 신뢰도)
+    """
+    full = " ".join(map(str, [title, text, url, raw_place, channel, filename]))
+    low = full.lower()
+
+    # 1) URL 확정 힌트
+    for hint in SEOUL_URL_HINTS:
+        if hint.lower() in low:
+            return "서울", "서울 URL 힌트", "높음"
+    for hint in EUMSEONG_URL_HINTS:
+        if hint.lower() in low:
+            return "음성", "음성 URL 힌트", "높음"
+
+    # 2) 원본 장소 컬럼 우선
+    known = _normalize_known_place(raw_place)
+    if known:
+        return known, "원본 장소 컬럼", "높음"
+
+    # 3) 키워드 점수 판정
+    seoul_score = _loc_score(full, SEOUL_STRONG, SEOUL_CONTEXT)
+    eum_score = _loc_score(full, EUMSEONG_STRONG, EUMSEONG_CONTEXT)
+
+    if seoul_score >= eum_score + 2 and seoul_score > 0:
+        return "서울", f"서울 키워드 우세({seoul_score}:{eum_score})", "높음" if seoul_score >= 5 else "중간"
+    if eum_score >= seoul_score + 2 and eum_score > 0:
+        return "음성", f"음성 키워드 우세({eum_score}:{seoul_score})", "높음" if eum_score >= 5 else "중간"
+
+    # 4) 직접 언급 보정
+    if any(k in full for k in ["서울", "강남", "논현", "퓨처콤플렉스"]):
+        return "서울", "서울 직접 언급", "중간"
+    if any(k in full for k in ["음성", "충북", "충청북도", "대소"]):
+        return "음성", "음성 직접 언급", "중간"
+
+    # 5) 일반 명칭만 있는 경우: 본관인 음성으로 보수 분류하되 신뢰도 낮음 표시
+    if "한독의약박물관" in full or "한독 박물관" in full:
+        return "음성", "일반 명칭만 있어 본관 기준 분류", "낮음"
+
+    # UI 필터를 음성/서울만 유지하기 위한 기본값
+    return "음성", "장소 단서 부족, 기본값 음성", "낮음"
+
+
+def standardize(df, channel, filename=""):
     is_merged = (channel == "통합블로그")
     has_src = "출처" in df.columns          # 통합 파일에 있는 출처 컬럼
     recs = []
     for _, r in df.iterrows():
-        text = _get(r, "리뷰내용", "본문", "요약")
-        title = _get(r, "제목")
+        text = _get(r, "리뷰내용", "본문", "요약", "내용", "리뷰", "후기")
+        title = _get(r, "제목", "타이틀")
+        url = _get(r, "URL", "url", "링크", "주소")
 
         # 통합 파일이면 행의 '출처'로 실제 채널을 지정(네이버/다음 분리)
         ch = channel
@@ -418,19 +514,25 @@ def standardize(df, channel):
             if mapped:
                 ch = mapped
 
-        # 장소 컬럼(카카오맵: 한독의약박물관(음성)/(서울)) 보존. 없으면 채널명 사용
-        place = _get(r, "장소") or ch
+        # 원본 장소는 보존하되, 분석용 장소는 실제 방문 지점(음성/서울)으로 재분류
+        raw_place = _get(r, "장소", "방문장소", "지점", "place", "location")
+        visit_place, place_reason, place_conf = classify_visit_place(
+            title=title, text=text, url=url, raw_place=raw_place, channel=ch, filename=filename
+        )
 
         recs.append({
-            "채널": ch,
-            "장소": place,
+            "채널": ch,                    # 어디에서 수집했는가
+            "장소": visit_place,           # 실제 어디를 방문했는가: 음성/서울만 사용
+            "원본장소": raw_place,
+            "장소판정근거": place_reason,
+            "장소판정신뢰도": place_conf,
             "작성일": _get(r, "작성일"),
             "작성자": _get(r, "작성자", "블로그명", "블로그ID"),
             "별점": r["별점"] if "별점" in r and pd.notna(r["별점"]) else None,
             "제목": title,
             "내용": text,
             "_full": (title + " " + text).strip(),
-            "URL": _get(r, "URL"),
+            "URL": url,
         })
     return pd.DataFrame(recs)
 
@@ -638,7 +740,7 @@ st.markdown("""
         <div class="hero-logo">🏛️</div>
         <div>
             <h1>한독의약박물관 후기 분석</h1>
-            <p>네이버·다음·구글맵·카카오맵 리뷰를 감성·주제·개선과제로 자동 분석합니다.</p>
+            <p>네이버·다음·구글맵·카카오맵 리뷰를 실제 방문 장소(음성·서울) 기준으로 감성·주제·개선과제로 자동 분석합니다.</p>
         </div>
     </div>
 </div>
@@ -649,7 +751,7 @@ st.markdown("""
 <div class="upload-card">
     <div class="uc-title">📂 데이터 업로드</div>
     <div class="uc-desc">PC 크롤러가 만든 후기 <b>엑셀(.xlsx)</b> 또는 <b>.csv</b> 를
-        여러 개 한 번에 올려주세요. 파일명으로 채널이 자동 분류됩니다.</div>
+        여러 개 한 번에 올려주세요. 파일명으로 수집 채널이 분류되고, 후기 내용으로 실제 방문 장소가 자동 판정됩니다.</div>
 </div>
 """, unsafe_allow_html=True)
 uploaded = st.file_uploader(
@@ -670,7 +772,7 @@ if not uploaded:
         - **별점이 있는 채널**(구글맵·카카오맵)은 별점을 우선 사용하고,
           별점이 없으면 **본문 단어**로 판정합니다.
         - **주제 분석**으로 "후기가 주로 무슨 이야기를 하는지" 비율까지 보여줍니다.
-        - 채널별·감성별 **인터랙티브 차트**와 **개선 과제**를 제공합니다.
+        - 장소별·감성별 **인터랙티브 차트**와 **개선 과제**를 제공합니다.
         """)
     st.stop()
 
@@ -704,7 +806,7 @@ if skipped:
 # --- 표준화 + 병합 ---
 frames, load_info = [], []
 for name, ch, raw in kept:
-    std = standardize(raw, ch)
+    std = standardize(raw, ch, name)
     frames.append(std)
     # 통합 파일은 내부적으로 네이버/다음으로 나뉘므로 표시를 명확히
     shown = ch
@@ -722,11 +824,11 @@ data_all = analyze(pd.concat(frames, ignore_index=True))
 data_all["_full"] = (data_all["제목"].fillna("").astype(str) + " "
                      + data_all["내용"].fillna("").astype(str)).str.strip()
 
-# 장소 목록(카카오맵처럼 음성/서울 등으로 나뉜 경우만 의미 있음. 없으면 채널명)
-place_options = ["전체"] + sorted(data_all["장소"].dropna().unique().tolist())
+# 장소 필터는 실제 방문 장소 기준으로 고정: 전체 / 음성 / 서울
+place_options = ["전체", "음성", "서울"]
 
-show_cols = ["채널", "작성일", "작성자", "별점", "감성", "판정근거", "감성점수",
-             "제목", "내용", "URL"]
+show_cols = ["장소", "채널", "작성일", "작성자", "별점", "감성", "판정근거", "감성점수",
+             "장소판정신뢰도", "장소판정근거", "제목", "내용", "URL"]
 today = datetime.date.today().strftime("%Y-%m-%d")
 
 
@@ -749,27 +851,27 @@ with st.sidebar:
     )
     st.divider()
 
-    # ---- 장소별 필터 (카카오맵 음성/서울처럼 여러 장소가 있을 때만 표시) ----
-    selected_place = "전체"
-    if len(place_options) > 2:   # "전체" 포함 실제 장소가 2개 이상일 때만 노출
-        fcol1, fcol2 = st.columns([2.4, 1])
-        with fcol1:
-            st.markdown("**📍 장소 필터**")
-        with fcol2:
-            if st.button("↺ 초기화", use_container_width=True,
-                         help="장소 필터를 '전체'로 되돌립니다.",
-                         disabled=st.session_state.get("place_filter", "전체") == "전체"):
-                st.session_state["place_filter"] = "전체"
-                st.rerun()
-        selected_place = st.selectbox(
-            "장소 필터", place_options, label_visibility="collapsed",
-            key="place_filter",
-            help="특정 장소를 선택하면 모든 메뉴(감성분석·주제분석·개선과제·보고서)가 "
-                 "그 장소 데이터만 반영해 보여줍니다.",
-        )
-        if selected_place != "전체":
-            st.caption(f"현재 '{selected_place}' 데이터만 보고 있어요.")
-        st.divider()
+    # ---- 실제 방문 장소 필터: 전체 / 음성 / 서울만 표시 ----
+    st.markdown("**📍 장소 필터**")
+    if st.session_state.get("place_filter", "전체") not in place_options:
+        st.session_state["place_filter"] = "전체"
+    fcol1, fcol2 = st.columns([2.4, 1])
+    with fcol2:
+        if st.button("↺ 초기화", use_container_width=True,
+                     help="장소 필터를 '전체'로 되돌립니다.",
+                     disabled=st.session_state.get("place_filter", "전체") == "전체"):
+            st.session_state["place_filter"] = "전체"
+            st.rerun()
+    selected_place = st.radio(
+        "실제 방문 장소",
+        place_options,
+        label_visibility="collapsed",
+        key="place_filter",
+        help="업로드 사이트가 아니라 실제 방문 장소 기준입니다. 출처 채널은 보조 정보로만 사용됩니다.",
+    )
+    if selected_place != "전체":
+        st.caption(f"현재 '{selected_place}' 방문 후기만 보고 있어요.")
+    st.divider()
 
     with st.expander(f"📥 불러온 파일 {len(load_info)}개", expanded=False):
         st.table(pd.DataFrame(load_info, columns=["파일명", "채널", "건수"]))
