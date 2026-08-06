@@ -208,13 +208,33 @@ def _get(row, *keys):
     return ""
 
 
+def _source_to_channel(src):
+    """통합 파일의 '출처' 값(네이버/다음)을 표준 채널명으로"""
+    s = str(src)
+    if "네이버" in s:
+        return "네이버블로그"
+    if "다음" in s:
+        return "다음블로그"
+    return None
+
+
 def standardize(df, channel):
+    is_merged = (channel == "통합블로그")
+    has_src = "출처" in df.columns          # 통합 파일에 있는 출처 컬럼
     recs = []
     for _, r in df.iterrows():
         text = _get(r, "리뷰내용", "본문", "요약")
         title = _get(r, "제목")
+
+        # 통합 파일이면 행의 '출처'로 실제 채널을 지정(네이버/다음 분리)
+        ch = channel
+        if is_merged and has_src:
+            mapped = _source_to_channel(r.get("출처"))
+            if mapped:
+                ch = mapped
+
         recs.append({
-            "채널": channel,
+            "채널": ch,
             "작성일": _get(r, "작성일"),
             "작성자": _get(r, "작성자", "블로그명", "블로그ID"),
             "별점": r["별점"] if "별점" in r and pd.notna(r["별점"]) else None,
@@ -286,17 +306,43 @@ if not uploaded:
         """)
     st.stop()
 
-# --- 업로드 읽기 ---
-frames, load_info = [], []
+# --- 업로드 파일 분류 ---
+parsed = []          # (파일명, 채널, DataFrame)
 for f in uploaded:
     try:
         raw = read_file(f.getvalue(), f.name)
         channel = guess_channel(f.name)
-        std = standardize(raw, channel)
-        frames.append(std)
-        load_info.append((f.name, channel, len(std)))
+        parsed.append((f.name, channel, raw))
     except Exception as e:
         st.error(f"'{f.name}' 읽기 실패: {e}")
+
+# --- 중복 방지: 통합 블로그가 있으면 개별 네이버/다음은 자동 제외 ---
+has_merged = any(ch == "통합블로그" for _, ch, _ in parsed)
+skipped = []
+kept = []
+for name, ch, raw in parsed:
+    if has_merged and ch in ("네이버블로그", "다음블로그"):
+        skipped.append((name, ch))          # 통합에 이미 포함 → 중복 제외
+    else:
+        kept.append((name, ch, raw))
+
+if skipped:
+    names = ", ".join(f"'{n}'" for n, _ in skipped)
+    st.warning(
+        f"⚠️ **통합 블로그** 파일이 있어, 개별 블로그 파일 {names} 은(는) "
+        "중복 방지를 위해 자동 제외했어요. (통합 파일에 이미 포함되어 있어요)"
+    )
+
+# --- 표준화 + 병합 ---
+frames, load_info = [], []
+for name, ch, raw in kept:
+    std = standardize(raw, ch)
+    frames.append(std)
+    # 통합 파일은 내부적으로 네이버/다음으로 나뉘므로 표시를 명확히
+    shown = ch
+    if ch == "통합블로그":
+        shown = "통합블로그(→네이버/다음 분리)"
+    load_info.append((name, shown, len(std)))
 
 if not frames:
     st.warning("읽을 수 있는 데이터가 없습니다. 파일 형식을 확인해주세요.")
@@ -304,8 +350,9 @@ if not frames:
 
 data = analyze(pd.concat(frames, ignore_index=True))
 
-with st.expander(f"📥 불러온 파일 {len(load_info)}개 보기", expanded=False):
+with st.expander(f"📥 불러온 파일 {len(load_info)}개 보기", expanded=True):
     st.table(pd.DataFrame(load_info, columns=["파일명", "인식된 채널", "건수"]))
+    st.caption("※ 통합 블로그 파일은 내부의 '출처'에 따라 네이버/다음으로 자동 분류됩니다.")
 
 # --- KPI ---
 total = len(data)
