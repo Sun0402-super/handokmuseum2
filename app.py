@@ -385,6 +385,99 @@ def analyze_improvements(neg_df):
     return results
 
 
+# ----------------------- 주제 분석 (방문객이 주로 하는 이야기) -----------------------
+TOPICS = {
+    "약사 체험 프로그램": ["약사", "체험", "약만들", "약재체험", "프로그램",
+                    "만들어", "조제", "체험형", "체험학습"],
+    "해설·설명": ["해설", "도슨트", "설명", "안내문", "들으니", "이해", "가이드", "오디오"],
+    "전시·유물 관람": ["전시", "유물", "약재", "의료기구", "역사", "신기",
+                 "흥미", "볼거리", "소장품", "컬렉션", "작품"],
+    "아이·가족 나들이": ["아이", "가족", "아이와", "아이랑", "데리고", "초등",
+                  "유아", "어린이", "아기", "엄마", "아빠", "부모"],
+    "건물·공간·사진": ["건물", "정원", "산책", "사진", "포토", "예쁘", "경치",
+                 "조경", "분위기", "인테리어", "예쁜", "이쁜", "고풍"],
+    "가성비·무료": ["무료", "가성비", "알차", "저렴", "공짜", "값싸"],
+    "친절·응대": ["친절", "응대", "직원", "선생님", "안내원", "따뜻"],
+    "주차·접근성": ["주차", "교통", "접근", "찾기", "길찾", "내비", "대중교통"],
+    "규모·볼거리 아쉬움": ["규모작", "작고", "볼거리부족", "금방", "볼게없",
+                   "단조", "심심", "협소"],
+    "대기·혼잡": ["웨이팅", "대기", "기다", "붐비", "혼잡", "사람많"],
+}
+
+
+def extract_phrases(texts, top_n=12):
+    """자주 나오는 2~3어절 핵심 문구 (데이터 적어도 안전)"""
+    from sklearn.feature_extraction.text import CountVectorizer
+    docs = [" ".join(_tokenize(t)) for t in texts]
+    docs = [d for d in docs if d.strip()]
+    if len(docs) < 2:
+        return []
+    min_df = 3 if len(docs) >= 40 else (2 if len(docs) >= 8 else 1)
+    for md in (min_df, 2, 1):
+        try:
+            vec = CountVectorizer(ngram_range=(2, 3), min_df=md)
+            X = vec.fit_transform(docs)
+            if X.shape[1] == 0:
+                continue
+            freq = X.sum(axis=0).A1
+            terms = vec.get_feature_names_out()
+            order = freq.argsort()[::-1]
+            out = []
+            for i in order:
+                if freq[i] < max(2, md):
+                    continue
+                out.append((terms[i], int(freq[i])))
+                if len(out) >= top_n:
+                    break
+            if out:
+                return out
+        except (ValueError, Exception):
+            continue
+    return []
+
+
+def analyze_topics(df):
+    """주제 사전으로 후기 분류 → 주제별 건수·비율·감성·대표후기·핵심문구"""
+    from collections import Counter, defaultdict
+    total = len(df)
+    if total == 0:
+        return []
+    topic_rows = defaultdict(list)
+    for _, r in df.iterrows():
+        text = str(r.get("_full", "") or "")
+        ns = text.replace(" ", "")
+        senti = str(r.get("감성", ""))
+        for topic, keys in TOPICS.items():
+            if any(k.replace(" ", "") in ns for k in keys):
+                topic_rows[topic].append((senti, text))
+    results = []
+    for topic, rows in topic_rows.items():
+        texts = [t for _, t in rows]
+        sentis = Counter(s for s, _ in rows if s)
+        rep = ""
+        for t in sorted(texts, key=len):
+            if 10 <= len(t) <= 70:
+                rep = t
+                break
+        if not rep and texts:
+            rep = texts[0][:70]
+        phrases = extract_phrases(texts, top_n=3)
+        results.append({
+            "주제": topic, "건수": len(rows),
+            "비율": round(len(rows) / total * 100, 1),
+            "감성분포": dict(sentis), "대표후기": rep,
+            "핵심문구": [p for p, _ in phrases],
+        })
+    results.sort(key=lambda x: x["건수"], reverse=True)
+    return results
+
+
+def senti_str(dist):
+    order = ["긍정", "중립", "부정"]
+    parts = [f"{k}{dist[k]}" for k in order if dist.get(k)]
+    return " ".join(parts) if parts else "-"
+
+
 def to_excel_bytes(df):
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
@@ -569,8 +662,9 @@ _counts = data["감성"].value_counts().reindex(LABELS).fillna(0).astype(int)
 _pos_rate = round(_counts["긍정"] / _total * 100, 1) if _total else 0
 _neg = data[data["감성"] == "부정"]
 
-rep_tab1, rep_tab2, rep_tab3, rep_tab4 = st.tabs(
-    ["① 플랫폼별", "② 감성별 키워드·문장", "③ 공통 언급", "④ ★개선 과제"])
+rep_tab1, rep_tab5, rep_tab2, rep_tab3, rep_tab4 = st.tabs(
+    ["① 플랫폼별", "② ★주제 분석", "③ 감성별 키워드·문장",
+     "④ 공통 언급", "⑤ ★개선 과제"])
 
 # --- ① 플랫폼별 ---
 with rep_tab1:
@@ -588,7 +682,48 @@ with rep_tab1:
             f"({_pos_rate}%)으로, 방문객 반응은 **'{tone}'**입니다.")
     st.dataframe(piv, use_container_width=True)
 
-# --- ② 감성별 키워드 & 대표 문장 ---
+# --- ② ★주제 분석 (방문객이 주로 하는 이야기) ---
+with rep_tab5:
+    st.markdown("#### 🎯 방문객이 주로 이야기하는 내용")
+    topics = analyze_topics(data)
+    if not topics:
+        st.warning("주제로 분류된 후기가 없습니다.")
+    else:
+        top = topics[0]
+        st.success(f"**핵심 발견** — 후기의 **{top['비율']}%**가 "
+                   f"**'{top['주제']}'**을(를) 언급하며 가장 큰 화제입니다.")
+        # 주제별 비율 막대차트
+        tdf = pd.DataFrame([{"주제": t["주제"], "건수": t["건수"],
+                             "비율(%)": t["비율"]} for t in topics])
+        chart = (alt.Chart(tdf).mark_bar(color="#5B8FF9").encode(
+            x=alt.X("건수:Q", title="언급 후기 수"),
+            y=alt.Y("주제:N", sort="-x", title=None),
+            tooltip=["주제", "건수", "비율(%)"]).properties(height=340))
+        st.altair_chart(chart, use_container_width=True)
+
+        st.markdown("##### 주제별 상세")
+        for t in topics:
+            sd = senti_str(t["감성분포"])
+            with st.expander(f"▶ {t['주제']}  —  {t['건수']}건 ({t['비율']}%)  [{sd}]",
+                             expanded=(t is topics[0])):
+                if t["핵심문구"]:
+                    st.markdown("**자주 나온 표현:** "
+                                + ", ".join(f"`{p}`" for p in t["핵심문구"]))
+                if t["대표후기"]:
+                    st.markdown(f"**대표 후기:** \"{t['대표후기']}\"")
+        # 주제 분석 CSV 다운로드
+        tdf_full = pd.DataFrame([{
+            "주제": t["주제"], "건수": t["건수"], "비율(%)": t["비율"],
+            "감성분포": senti_str(t["감성분포"]),
+            "핵심문구": " / ".join(t["핵심문구"]), "대표후기": t["대표후기"],
+        } for t in topics])
+        st.download_button(
+            "⬇️ 주제 분석 표(CSV) 다운로드",
+            data=tdf_full.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"주제분석_{datetime.date.today()}.csv",
+            mime="text/csv")
+
+# --- ③ 감성별 키워드 & 대표 문장 ---
 with rep_tab2:
     for lab in LABELS:
         sub = data[data["감성"] == lab]
