@@ -42,35 +42,53 @@ st.markdown(f"""
     /* Streamlit 기본 상단 헤더 숨기기 (우리 배너가 그 자리를 대신함) */
     header[data-testid="stHeader"] {{ display: none; }}
 
-    /* 본문 여백: 상단은 고정 배너 높이만큼 확보 */
-    .block-container {{ padding-top: 96px; padding-bottom: 2rem;
+    /* 본문 여백: 상단은 고정 배너 높이만큼 확보 (배너를 키워서 값도 증가) */
+    .block-container {{ padding-top: 132px; padding-bottom: 2rem;
                         max-width: 1300px; }}
 
     /* ---- 헤더 배너: 화면 최상단 '전체 폭'(사이드바까지) 고정 ---- */
     .hero {{
-        position: fixed; top: 0; left: 0; right: 0; z-index: 999;
-        height: 76px; display: flex; align-items: center;
+        position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
+        height: 108px; display: flex; align-items: center;
         background: linear-gradient(135deg, {THEME['navy']} 0%,
                     {THEME['slate2']} 100%);
-        padding: 0 30px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+        padding: 0 40px;
+        box-shadow: 0 2px 14px rgba(0,0,0,0.20);
         color: #fff;
+        opacity: 1 !important;               /* 리런 중 투명해짐 방지 */
     }}
-    .hero-row {{ display:flex; align-items:center; gap:13px; }}
+    .hero-row {{ display:flex; align-items:center; gap:18px; }}
     .hero-logo {{
-        width:42px; height:42px; border-radius:12px; flex:none;
+        width:58px; height:58px; border-radius:16px; flex:none;
         background: rgba(255,255,255,0.08);
         border: 1px solid rgba(255,255,255,0.12);
         display:flex; align-items:center; justify-content:center;
-        font-size:21px;
+        font-size:30px;
     }}
-    .hero h1 {{ margin: 0; font-size: 20px; font-weight: 800;
-                letter-spacing: -0.3px; color:#F8FAFC; line-height:1.2; }}
-    .hero p  {{ margin: 2px 0 0; font-size: 12.5px; color:#CBD5E1; }}
+    .hero h1 {{ margin: 0; font-size: 27px; font-weight: 800;
+                letter-spacing: -0.3px; color:#F8FAFC; line-height:1.25; }}
+    .hero p  {{ margin: 4px 0 0; font-size: 14.5px; color:#CBD5E1; }}
+
+    /* ★ Streamlit 리런 시 요소가 잠깐 투명해지는 현상 방지
+       (fixed 로 뺀 배너는 부모의 opacity 변화까지는 못 벗어나므로
+        배너를 감싼 조상 요소들의 opacity/transition 을 강제 고정) */
+    div:has(> .hero),
+    div:has(.hero) {{
+        opacity: 1 !important;
+        transition: none !important;
+        animation: none !important;
+    }}
+    [data-testid="stMarkdownContainer"]:has(.hero),
+    [data-testid="element-container"]:has(.hero),
+    .element-container:has(.hero) {{
+        opacity: 1 !important;
+        transition: none !important;
+    }}
+    .hero, .hero * {{ opacity: 1 !important; }}
 
     /* 사이드바 내용도 배너 높이만큼 아래로 */
     section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{
-        padding-top: 92px;
+        padding-top: 124px;
     }}
 
     /* ---- KPI 카드 ---- */
