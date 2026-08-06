@@ -752,9 +752,18 @@ with st.sidebar:
     # ---- 장소별 필터 (카카오맵 음성/서울처럼 여러 장소가 있을 때만 표시) ----
     selected_place = "전체"
     if len(place_options) > 2:   # "전체" 포함 실제 장소가 2개 이상일 때만 노출
-        st.markdown("**📍 장소 필터**")
+        fcol1, fcol2 = st.columns([2.4, 1])
+        with fcol1:
+            st.markdown("**📍 장소 필터**")
+        with fcol2:
+            if st.button("↺ 초기화", use_container_width=True,
+                         help="장소 필터를 '전체'로 되돌립니다.",
+                         disabled=st.session_state.get("place_filter", "전체") == "전체"):
+                st.session_state["place_filter"] = "전체"
+                st.rerun()
         selected_place = st.selectbox(
-            "장소 필터", place_options, index=0, label_visibility="collapsed",
+            "장소 필터", place_options, label_visibility="collapsed",
+            key="place_filter",
             help="특정 장소를 선택하면 모든 메뉴(감성분석·주제분석·개선과제·보고서)가 "
                  "그 장소 데이터만 반영해 보여줍니다.",
         )
