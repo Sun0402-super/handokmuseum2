@@ -72,6 +72,50 @@ NEGATORS = ["안", "못", "없", "않", "말고", "빼고"]
 LABELS = ["긍정", "중립", "부정"]
 COLOR = {"긍정": "#4CAF50", "중립": "#9E9E9E", "부정": "#F44336"}
 
+# ----------------------- 보고서용: 불용어 & 개선 과제 테마 -----------------------
+STOPWORDS = set("""
+그리고 그런데 그래서 하지만 그러나 또한 정말 진짜 너무 매우 조금 많이 약간 완전
+있는 있어요 있었어요 있고 없는 없어요 합니다 했어요 하고 해서 하는 되는 되어 된다
+같아요 같은 이런 저런 그런 여기 저기 거기 우리 저희 제가 내가 그냥 아주 계속 다시
+한독 의약 박물관 한독의약박물관 후기 방문 관람 곳 것 수 때 등 및
+에서 에게 의 로 으로 처럼 보다 이라고 라고 하러 위해 대한
+음성 서울 오늘 어제 이번 지난 정도 위치 근처 다녀 다녀왔 왔어요 갔어요 봤어요 였어요
+이곳 저곳 하나 모두 함께 통해 관련 대해 경우 시간 요금 가격 입장
+""".split())
+
+SENT_SPLIT = re.compile(r"[.!?。\n]+")
+WORD_RE = re.compile(r"[가-힣]{2,}|[A-Za-z]{3,}")
+
+IMPROVEMENT_THEMES = {
+    "주차/교통": (
+        ["주차", "주차장", "차댈", "교통", "찾기힘", "찾기어렵", "접근성",
+         "길찾", "멀어", "버스", "대중교통"],
+        "주차 공간 확대·안내 강화, 대체 주차장/대중교통 이용 안내, 진입로 안내 개선"),
+    "대기/혼잡": (
+        ["웨이팅", "기다", "붐비", "혼잡", "사람많", "대기"],
+        "체험 프로그램 사전 예약제 도입, 시간대별 인원 분산, 대기 현황 안내"),
+    "전시 규모/볼거리": (
+        ["규모", "볼거리", "볼거", "볼게", "단조", "심심", "밋밋", "금방", "빨리끝"],
+        "체험형·참여형 콘텐츠 확충, 순환 기획전 강화, 포토존·인터랙션 요소 추가"),
+    "해설/설명": (
+        ["설명", "해설", "안내문", "정보부족", "이해", "어려", "설명서"],
+        "정기 해설(도슨트) 시간 확대·안내, 설명 패널 보강, 오디오가이드 도입"),
+    "시설/청결": (
+        ["낡", "오래되", "더럽", "지저분", "화장실", "청소", "관리", "정비",
+         "냄새", "에어컨", "난방", "의자", "벤치"],
+        "노후 시설 보수·정비, 청결 관리 주기 강화, 냉난방·휴게 공간 개선"),
+    "직원/응대": (
+        ["불친절", "직원", "응대", "태도", "무성의", "안내원", "퉁명"],
+        "현장 응대 매뉴얼 교육, 친절 서비스 모니터링, 안내 인력 배치 점검"),
+    "요금/가치": (
+        ["비싸", "돈아깝", "가격", "요금", "입장료", "가성비", "값"],
+        "요금 대비 체험 가치 강화, 할인·패키지 안내, 무료 프로그램 홍보 확대"),
+    "편의시설": (
+        ["매점", "카페", "먹을", "식당", "수유", "유모차", "휠체어",
+         "엘리베이터", "물품보관", "사물함"],
+        "편의시설(카페·휴게·수유실 등) 확충 검토, 유모차·휠체어 접근성 개선"),
+}
+
 CHANNEL_HINTS = {
     "네이버": "네이버블로그", "naver": "네이버블로그",
     "다음": "다음블로그", "daum": "다음블로그",
@@ -265,6 +309,82 @@ def analyze(df):
     return df
 
 
+# ----------------------- 보고서 생성 함수 -----------------------
+def _tokenize(text):
+    if not isinstance(text, str):
+        return []
+    out = []
+    for w in WORD_RE.findall(text):
+        if w in STOPWORDS:
+            continue
+        if re.search(r"(했어요|하고|해서|하는|하니|이라|이고|였어요|어요|았어요|"
+                     r"네요|으며|으면|지만|는데|하며|하면|되어|되는|된다|스러|"
+                     r"스럽|같아)$", w):
+            continue
+        w2 = re.sub(r"(은|는|이|가|을|를|에|의|도|로|으로|와|과|만|에서|에게)$", "", w)
+        if len(w2) < 2 or w2 in STOPWORDS:
+            continue
+        out.append(w2)
+    return out
+
+
+def top_keywords(texts, n=15):
+    from collections import Counter
+    c = Counter()
+    for t in texts:
+        c.update(set(_tokenize(t)))
+    return c.most_common(n)
+
+
+def rep_sentences(pairs, n=5):
+    cands, seen = [], set()
+    for score, text in pairs:
+        if not isinstance(text, str):
+            continue
+        for sent in SENT_SPLIT.split(text):
+            s = sent.strip()
+            if not (12 <= len(s) <= 90):
+                continue
+            if s[:20] in seen:
+                continue
+            seen.add(s[:20])
+            cands.append((abs(score), s))
+    cands.sort(key=lambda x: x[0], reverse=True)
+    return [s for _, s in cands[:n]]
+
+
+def analyze_improvements(neg_df):
+    from collections import defaultdict
+    theme_hits = defaultdict(list)
+    for _, r in neg_df.iterrows():
+        text = str(r.get("_full", "")) or (str(r.get("제목", "")) + str(r.get("내용", "")))
+        ns = text.replace(" ", "")
+        for theme, (keys, _a) in IMPROVEMENT_THEMES.items():
+            if any(k.replace(" ", "") in ns for k in keys):
+                theme_hits[theme].append(text)
+    results = []
+    for theme, texts in theme_hits.items():
+        keys, advice = IMPROVEMENT_THEMES[theme]
+        keys_ns = [k.replace(" ", "") for k in keys]
+
+        def rel(t):
+            n = t.replace(" ", "")
+            return min((n.find(k) for k in keys_ns if k in n), default=9999)
+        samples, seen = [], set()
+        for t in sorted(texts, key=lambda x: (rel(x), len(x))):
+            sn = t.strip()
+            if 8 <= len(sn) <= 80 and sn[:15] not in seen:
+                seen.add(sn[:15])
+                samples.append(sn)
+            if len(samples) >= 2:
+                break
+        if not samples and texts:
+            samples = [texts[0][:80]]
+        results.append((theme, len(texts), samples, advice))
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results
+
+
 def to_excel_bytes(df):
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
@@ -435,6 +555,109 @@ st.dataframe(
         "내용": st.column_config.TextColumn("내용", width="large"),
     },
 )
+
+# ============================== 분석 보고서 ==============================
+st.divider()
+st.subheader("📑 분석 보고서 (보고 자료용)")
+
+# 텍스트 컬럼 준비
+data["_full"] = (data["제목"].fillna("").astype(str) + " "
+                 + data["내용"].fillna("").astype(str)).str.strip()
+
+_total = len(data)
+_counts = data["감성"].value_counts().reindex(LABELS).fillna(0).astype(int)
+_pos_rate = round(_counts["긍정"] / _total * 100, 1) if _total else 0
+_neg = data[data["감성"] == "부정"]
+
+rep_tab1, rep_tab2, rep_tab3, rep_tab4 = st.tabs(
+    ["① 플랫폼별", "② 감성별 키워드·문장", "③ 공통 언급", "④ ★개선 과제"])
+
+# --- ① 플랫폼별 ---
+with rep_tab1:
+    piv = (data.groupby(["채널", "감성"]).size().unstack(fill_value=0)
+           .reindex(columns=LABELS, fill_value=0))
+    piv["합계"] = piv.sum(axis=1)
+    piv["긍정률(%)"] = (piv["긍정"] / piv["합계"] * 100).round(1)
+    star = pd.to_numeric(data["별점"], errors="coerce")
+    avg_star = data.assign(_s=star).groupby("채널")["_s"].mean().round(2)
+    piv["평균별점"] = avg_star
+    piv = piv.sort_values("긍정률(%)", ascending=False)
+    tone = ("매우 긍정적" if _pos_rate >= 70 else "대체로 긍정적"
+            if _pos_rate >= 50 else "긍·부정 혼재" if _pos_rate >= 30 else "개선 필요")
+    st.info(f"**한 줄 총평** — 전체 {_total}건 중 긍정 {_counts['긍정']}건"
+            f"({_pos_rate}%)으로, 방문객 반응은 **'{tone}'**입니다.")
+    st.dataframe(piv, use_container_width=True)
+
+# --- ② 감성별 키워드 & 대표 문장 ---
+with rep_tab2:
+    for lab in LABELS:
+        sub = data[data["감성"] == lab]
+        if len(sub) == 0:
+            continue
+        emoji = {"긍정": "😊", "중립": "😐", "부정": "😞"}[lab]
+        st.markdown(f"#### {emoji} {lab} ({len(sub)}건)")
+        kws = top_keywords(sub["_full"].tolist(), n=15)
+        if kws:
+            st.markdown("**핵심 키워드:** "
+                        + ", ".join(f"`{w}`({c})" for w, c in kws))
+        pairs = list(zip(sub.get("감성점수", [0] * len(sub)), sub["_full"].tolist()))
+        sents = rep_sentences(pairs, n=5)
+        if sents:
+            st.markdown("**대표 문장:**")
+            for s in sents:
+                st.markdown(f"> {s}")
+        st.divider()
+
+# --- ③ 공통 언급 ---
+with rep_tab3:
+    common = top_keywords(data["_full"].tolist(), n=15)
+    st.markdown("#### 🔑 후기가 공통적으로 자주 언급한 키워드")
+    if common:
+        kw_df = pd.DataFrame(common, columns=["키워드", "언급 문서 수"])
+        cc1, cc2 = st.columns([1, 1])
+        with cc1:
+            st.dataframe(kw_df, use_container_width=True, hide_index=True, height=360)
+        with cc2:
+            chart = (alt.Chart(kw_df).mark_bar(color="#5B8FF9").encode(
+                x=alt.X("언급 문서 수:Q"),
+                y=alt.Y("키워드:N", sort="-x"),
+                tooltip=["키워드", "언급 문서 수"]).properties(height=360))
+            st.altair_chart(chart, use_container_width=True)
+
+# --- ④ 개선 과제 ---
+with rep_tab4:
+    st.markdown("#### 🛠️ 개선 과제 (부정 후기 주제별 정리)")
+    if len(_neg) == 0:
+        st.success("부정 후기가 없어 도출된 개선 과제가 없습니다. 👍")
+    else:
+        improvements = analyze_improvements(_neg)
+        if not improvements:
+            st.warning("부정 후기가 있으나 사전 정의된 주제에 매칭되지 않았습니다. "
+                       "아래 부정 대표 문장을 직접 검토해 주세요.")
+            pairs = list(zip(_neg.get("감성점수", [0] * len(_neg)),
+                             _neg["_full"].tolist()))
+            for s in rep_sentences(pairs, n=5):
+                st.markdown(f"> {s}")
+        else:
+            top_theme, top_cnt = improvements[0][0], improvements[0][1]
+            st.error(f"**최우선 개선 과제: '{top_theme}'** "
+                     f"(부정 {top_cnt}건, 가장 많이 지적됨)")
+            imp_rows = []
+            for i, (theme, cnt, samples, advice) in enumerate(improvements, 1):
+                with st.expander(f"{i}. {theme}  —  부정 {cnt}건", expanded=(i == 1)):
+                    for s in samples:
+                        st.markdown(f"- 후기: \"{s}\"")
+                    st.success(f"✅ 개선 방향: {advice}")
+                imp_rows.append({"우선순위": i, "개선주제": theme, "부정건수": cnt,
+                                 "대표후기": " / ".join(samples), "개선방향": advice})
+            # 개선 과제 CSV 다운로드
+            imp_df = pd.DataFrame(imp_rows)
+            st.download_button(
+                "⬇️ 개선 과제 표(CSV) 다운로드",
+                data=imp_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"개선과제_{datetime.date.today()}.csv",
+                mime="text/csv",
+            )
 
 # --- 다운로드 ---
 st.divider()
