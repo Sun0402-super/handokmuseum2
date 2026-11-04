@@ -90,6 +90,7 @@ TOPICS = {
 
 OUTPUT_COLUMNS = [
     "source", "museum_location", "platform", "title", "content_summary", "full_text", "url",
+    "is_relevant", "relevance_reason", "target_mentions",
     "author", "published_date", "collected_date", "rating", "sentiment", "sentiment_score",
     "positive_score", "negative_score", "positive_evidence", "negative_evidence",
     "reversal_evidence", "keyword", "is_duplicate", "duplicate_group", "priority_source",
@@ -134,6 +135,55 @@ def detect_platform(filename, url, supplied=""):
     if "instagram" in text or "인스타" in text:
         return "인스타그램"
     return supplied or "기타"
+
+def classify_relevance(title, text, url, source):
+    """한독의약박물관 자체 후기인지 먼저 판정한다.
+
+    검색 결과에 '한독의약박물관'이 비교 대상으로 한 번 언급되거나,
+    '음성'이라는 지역명만 포함된 다른 관광지가 섞이는 문제를 차단한다.
+    """
+    title_norm = re.sub(r"\s+", "", str(title)).lower()
+    body_norm = re.sub(r"\s+", "", str(text)).lower()
+    source_norm = re.sub(r"\s+", "", str(source)).lower()
+    url_norm = str(url).lower()
+    whole = f"{title_norm} {body_norm} {source_norm} {url_norm}"
+
+    target_terms = [
+        "한독의약박물관", "한독박물관", "handokmuseum", "handokmuseumofmedicine",
+        "대풍산단로78", "한독퓨처콤플렉스", "한독공장"
+    ]
+    target_mentions = sum(whole.count(term) for term in target_terms)
+    title_has_target = any(term in title_norm for term in target_terms)
+    source_has_target = any(term in source_norm for term in target_terms)
+
+    # 이번 데이터에서 실제로 확인된 대표 오수집 대상과 일반적인 타 박물관 표지
+    unrelated_terms = [
+        "미래엔교과서박물관", "교과서박물관", "봉학골산림욕장", "품바재생예술촌",
+        "품바예술촌", "반기문평화기념관", "철박물관"
+    ]
+    unrelated_hits = [term for term in unrelated_terms if term in title_norm or term in body_norm]
+
+    # 제목이나 장소가 한독의약박물관이면 가장 신뢰도가 높다.
+    if title_has_target or source_has_target:
+        return True, "제목/장소에 한독의약박물관 명시", target_mentions
+
+    # 다른 명소가 제목에 있고 한독은 비교 문구로만 소수 언급된 경우 제외한다.
+    title_unrelated = [term for term in unrelated_terms if term in title_norm]
+    if title_unrelated:
+        return False, f"다른 장소 후기: {', '.join(title_unrelated)}", target_mentions
+
+    # 본문에 정확한 명칭이 반복되면 관련 후기 가능성이 높다.
+    if target_mentions >= 2:
+        return True, "본문에 한독의약박물관 반복 언급", target_mentions
+
+    # 한 번만 나온 글은 비교·추천 목록일 가능성이 있어 분석에서 제외한다.
+    if target_mentions == 1:
+        return False, "한독의약박물관 1회 단순 언급/비교", target_mentions
+
+    # '음성' 지역명만 있는 다른 관광지는 관련 후기가 아니다.
+    if unrelated_hits:
+        return False, f"다른 관광지 내용: {', '.join(unrelated_hits)}", target_mentions
+    return False, "한독의약박물관 직접 언급 없음", target_mentions
 
 def detect_location(title, text, url, source):
     combined = re.sub(r"\s+", "", f"{title} {text} {url} {source}").lower()
@@ -271,9 +321,17 @@ def standardize(df, filename):
         rec["source"] = rec["source"] or rec["platform"]
         rec["full_text"] = rec["full_text"] or rec["content_summary"]
         combined = f"{rec['title']} {rec['content_summary']} {rec['full_text']}"
-        rec["museum_location"] = detect_location(rec["title"], combined, rec["url"], rec["source"])
-        label, score, pos, neg, pos_ev, neg_ev, rev_ev, note = sentiment(combined, rec["rating"])
+        relevant, relevance_reason, target_mentions = classify_relevance(
+            rec["title"], combined, rec["url"], rec["source"]
+        )
+        rec["museum_location"] = detect_location(rec["title"], combined, rec["url"], rec["source"]) if relevant else "분석 제외"
+        if relevant:
+            label, score, pos, neg, pos_ev, neg_ev, rev_ev, note = sentiment(combined, rec["rating"])
+        else:
+            label, score, pos, neg, pos_ev, neg_ev, rev_ev, note = "분석 제외", 0, 0, 0, "", "", "", "관련성 필터 제외"
         rec.update({
+            "is_relevant": relevant, "relevance_reason": relevance_reason,
+            "target_mentions": target_mentions,
             "collected_date": date.today().isoformat(), "sentiment": label, "sentiment_score": score,
             "positive_score": pos, "negative_score": neg, "positive_evidence": pos_ev,
             "negative_evidence": neg_ev, "reversal_evidence": rev_ev,
@@ -312,10 +370,13 @@ def deduplicate(df, threshold):
 def excel_bytes(data):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        data[OUTPUT_COLUMNS].to_excel(writer, index=False, sheet_name="후기분석")
-        pd.crosstab(data["museum_location"], data["sentiment"], margins=True).to_excel(writer, sheet_name="관별감성요약")
-        pd.crosstab(data["platform"], data["sentiment"], margins=True).to_excel(writer, sheet_name="플랫폼요약")
-        data.groupby(["museum_location", "primary_topic"]).size().rename("건수").reset_index().to_excel(writer, index=False, sheet_name="주제분석")
+        relevant_data = data[data["is_relevant"]].copy()
+        excluded_data = data[~data["is_relevant"]].copy()
+        relevant_data[OUTPUT_COLUMNS].to_excel(writer, index=False, sheet_name="후기분석")
+        excluded_data[OUTPUT_COLUMNS].to_excel(writer, index=False, sheet_name="관련없음_제외목록")
+        pd.crosstab(relevant_data["museum_location"], relevant_data["sentiment"], margins=True).to_excel(writer, sheet_name="관별감성요약")
+        pd.crosstab(relevant_data["platform"], relevant_data["sentiment"], margins=True).to_excel(writer, sheet_name="플랫폼요약")
+        relevant_data.groupby(["museum_location", "primary_topic"]).size().rename("건수").reset_index().to_excel(writer, index=False, sheet_name="주제분석")
         for ws in writer.book.worksheets:
             ws.freeze_panes = "A2"
             ws.auto_filter.ref = ws.dimensions
@@ -325,7 +386,7 @@ def excel_bytes(data):
     return output.getvalue()
 
 st.title("💊 한독의약박물관 온라인 후기 감성 분석기")
-st.caption("음성관과 서울관 후기를 구분하고, 반전 문맥을 반영해 플랫폼별·관별 감성 및 주제를 분석합니다.")
+st.caption("한독의약박물관 자체 후기만 먼저 선별한 뒤, 음성관·서울관 구분과 반전 문맥을 반영해 감성을 분석합니다.")
 
 with st.sidebar:
     st.header("분석 설정")
@@ -355,8 +416,19 @@ if errors:
 if not frames:
     st.stop()
 
-all_data = deduplicate(pd.concat(frames, ignore_index=True), threshold)
+raw_data = pd.concat(frames, ignore_index=True)
+excluded_data = raw_data[~raw_data["is_relevant"]].copy()
+relevant_data = raw_data[raw_data["is_relevant"]].copy()
+if relevant_data.empty:
+    st.error("한독의약박물관 자체 후기로 판정된 글이 없습니다. 아래 제외 목록을 확인해 주세요.")
+    st.dataframe(excluded_data[["title", "url", "relevance_reason"]], use_container_width=True, hide_index=True)
+    st.stop()
+all_data = deduplicate(relevant_data, threshold)
 analysis_data = all_data[~all_data["is_duplicate"]].copy() if remove_duplicates else all_data.copy()
+
+with st.expander(f"관련 없는 검색 결과 제외 목록 ({len(excluded_data)}건)"):
+    st.caption("다른 박물관·관광지 후기, 비교 문구 1회 언급, 직접 언급이 없는 글은 감성 분석 전에 제외됩니다.")
+    st.dataframe(excluded_data[["title", "platform", "relevance_reason", "url"]], use_container_width=True, hide_index=True)
 
 st.subheader("필터")
 f1, f2, f3 = st.columns(3)
@@ -376,12 +448,13 @@ if selected_sentiment != "전체":
     filtered = filtered[filtered["sentiment"] == selected_sentiment]
 
 counts = filtered["sentiment"].value_counts()
-metrics = st.columns(5)
+metrics = st.columns(6)
 metrics[0].metric("후기", len(filtered))
 metrics[1].metric("긍정", int(counts.get("긍정", 0)))
 metrics[2].metric("중립", int(counts.get("중립", 0)))
 metrics[3].metric("부정", int(counts.get("부정", 0)))
-metrics[4].metric("중복 제외", int(all_data["is_duplicate"].sum()))
+metrics[4].metric("관련 없음 제외", len(excluded_data))
+metrics[5].metric("중복 제외", int(all_data["is_duplicate"].sum()))
 
 left, right = st.columns(2)
 with left:
@@ -417,8 +490,8 @@ display_columns = [
 st.dataframe(filtered[display_columns], use_container_width=True, hide_index=True)
 
 st.download_button(
-    "전체 분석 결과 Excel 다운로드", excel_bytes(analysis_data),
+    "전체 분석 결과 Excel 다운로드", excel_bytes(pd.concat([analysis_data, excluded_data], ignore_index=True)),
     file_name=f"한독의약박물관_후기감성분석_{date.today().isoformat()}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary"
 )
-st.caption("감성 분석과 관 구분은 규칙 기반 참고 결과입니다. 공식 평가 자료에는 판정 근거와 원문을 사람이 최종 검토해 주세요.")
+st.caption("관련성·감성·관 구분은 규칙 기반 참고 결과입니다. 공식 평가 자료에는 판정 근거와 원문을 사람이 최종 검토해 주세요.")
