@@ -1,5 +1,13 @@
 # -*- coding: utf-8 -*-
-"""한독의약박물관 온라인 후기 감성 분석 Streamlit 대시보드."""
+"""한독의약박물관 온라인 후기 감성 분석 Streamlit 대시보드.
+
+주요 기능
+- CSV/XLSX 여러 파일 통합
+- 음성관/서울관 자동 분류
+- 네이버/다음 중복 시 네이버 우선 유지
+- 부정 예상 뒤의 긍정 결론 등 반전 문맥 반영
+- 관별/플랫폼별 감성 그래프와 Excel 다운로드
+"""
 from __future__ import annotations
 
 import io
@@ -12,16 +20,65 @@ import streamlit as st
 
 st.set_page_config(page_title="한독의약박물관 후기 감성 분석", page_icon="💊", layout="wide")
 
+# 일반 감성 표현
 POSITIVE = [
-    "좋다", "좋았", "좋은", "유익", "재미있", "재밌", "친절", "알차", "추천", "만족",
-    "깨끗", "아이가 좋아", "설명이 좋", "체험이 좋", "의미 있", "의미있", "다시 방문",
-    "최고", "훌륭", "흥미", "신기", "즐겁", "볼거리", "교육적", "가볼만"
+    "좋다", "좋았다", "좋은", "유익", "재미있", "재밌", "친절", "알차", "추천", "만족",
+    "깨끗", "아이가 좋아", "아이들이 좋아", "설명이 좋", "체험이 좋", "의미 있", "의미있",
+    "다시 방문", "최고", "훌륭", "흥미", "신기", "즐겁", "볼거리", "교육적", "가볼만",
+    "다양", "풍부", "도움", "잘 되어", "잘되어", "인상적", "기대 이상", "생각보다 좋"
 ]
 NEGATIVE = [
     "아쉽", "불편", "어렵", "별로", "부족", "실망", "복잡", "주차 불편", "안내 부족",
     "찾기 어렵", "기대 이하", "시간이 짧", "불친절", "지루", "재미없", "협소", "좁",
-    "기다", "웨이팅", "볼 게 없", "볼게 없"
+    "기다", "웨이팅", "볼 게 없", "볼게 없", "관리 안", "추천하지 않"
 ]
+
+# 강한 최종 평가에는 일반 단어보다 높은 가중치를 부여
+STRONG_POSITIVE = [
+    "너무 만족", "매우 만족", "정말 만족", "적극 추천", "꼭 추천", "다시 방문하고 싶",
+    "재방문하고 싶", "아이들이 정말 좋아", "아이들이 즐거워", "너무 재밌", "정말 재미있",
+    "기대 이상", "생각보다 훨씬 좋", "전혀 지루하지 않", "지루하지 않", "지루하지 않았"
+]
+STRONG_NEGATIVE = [
+    "매우 실망", "너무 실망", "다시는 방문하지 않", "추천하지 않", "돈이 아깝",
+    "시간 낭비", "전혀 재미없", "너무 지루", "매우 불편"
+]
+
+# 부정 예상이나 걱정이 뒤의 긍정 경험으로 뒤집히는 대표 패턴
+POSITIVE_REVERSAL_PATTERNS = [
+    r"지루(?:할|해할|해하지 않을|하지 않을|하지는 않을|하지 않을까)?[^.!?\n]{0,45}(?:그런데|하지만|했는데|였는데|아니|전혀|오히려|생각보다)[^.!?\n]{0,60}(?:재미|즐겁|흥미|만족|좋|다양|알차)",
+    r"지루[^.!?\n]{0,40}(?:전혀\s*)?(?:아니었|않았|않다|않고|하지 않았|하지 않)",
+    r"(?:걱정|우려)[^.!?\n]{0,45}(?:했는데|했지만|과 달리|와 달리|오히려|전혀)[^.!?\n]{0,60}(?:재미|즐겁|흥미|만족|좋|다양|알차)",
+    r"(?:기대하지 않았|기대 없이|별 기대 없|큰 기대 없)[^.!?\n]{0,45}(?:그런데|했는데|였는데|오히려|생각보다)[^.!?\n]{0,60}(?:좋|만족|재미|즐겁|흥미|다양|알차|볼거리)",
+    r"어려울[^.!?\n]{0,35}(?:줄 알았|것 같았|까 걱정)[^.!?\n]{0,45}(?:그런데|했는데|였는데|오히려|생각보다)[^.!?\n]{0,60}(?:쉽|이해|재미|도움|좋)",
+    r"(?:아쉽|부족|별로|실망|불편)[^.!?\n]{0,35}(?:줄 알았|것 같았|까 걱정)[^.!?\n]{0,45}(?:아니|않았|오히려|생각보다)[^.!?\n]{0,55}(?:좋|만족|괜찮|편리|충분)",
+]
+
+# 부정 표현 자체가 부정되면 긍정 보정
+NEGATED_NEGATIVE_PATTERNS = [
+    r"지루(?:하지|하지는|하지도|하지가)\s*(?:않|않았|않고|않아서|않다)",
+    r"전혀\s*지루하지\s*(?:않|않았)",
+    r"재미없(?:지|지는|지도)\s*(?:않|않았)",
+    r"불편(?:하지|하지는|하지도)\s*(?:않|않았)",
+    r"어렵(?:지|지는|지도)\s*(?:않|않았)",
+    r"아쉽(?:지|지는|지도)\s*(?:않|않았)",
+    r"부족(?:하지|하지는|하지도)\s*(?:않|않았)",
+    r"실망(?:하지|하지는|하지도)\s*(?:않|않았)",
+    r"별로일\s*줄\s*알았는데[^.!?\n]{0,50}(?:좋|만족|괜찮|재미)",
+]
+
+# 긍정 표현이 부정되는 경우
+NEGATED_POSITIVE_PATTERNS = [
+    r"좋(?:지|지는|지도)\s*(?:않|않았)",
+    r"재미있(?:지|지는|지도)\s*(?:않|않았)",
+    r"만족(?:하지|하지는|하지도)\s*(?:않|않았)",
+    r"추천(?:하지|하지는|하지도)\s*(?:않|않았)",
+    r"친절(?:하지|하지는|하지도)\s*(?:않|않았)",
+]
+
+# 역접 뒤의 결론에 더 높은 가중치를 주기 위한 접속 표현
+CONTRAST_MARKERS = ["하지만", "그런데", "그렇지만", "했는데", "였는데", "반면", "오히려", "생각보다", "전혀"]
+
 TOPICS = {
     "교육·체험": ["체험", "교육", "약사", "연구원", "간호사", "응급구조", "만들기", "프로그램"],
     "전시·유물": ["전시", "유물", "의약", "약장", "의료기구", "역사", "보물"],
@@ -30,11 +87,13 @@ TOPICS = {
     "시설·환경": ["깨끗", "시설", "로비", "정원", "카페", "주차", "건물"],
     "예약·운영": ["예약", "운영시간", "휴관", "무료", "입장", "신청"],
 }
+
 OUTPUT_COLUMNS = [
     "source", "museum_location", "platform", "title", "content_summary", "full_text", "url",
     "author", "published_date", "collected_date", "rating", "sentiment", "sentiment_score",
-    "positive_score", "negative_score", "keyword", "is_duplicate", "duplicate_group",
-    "priority_source", "primary_topic", "notes"
+    "positive_score", "negative_score", "positive_evidence", "negative_evidence",
+    "reversal_evidence", "keyword", "is_duplicate", "duplicate_group", "priority_source",
+    "primary_topic", "notes"
 ]
 ALIASES = {
     "source": ["source", "장소"], "platform": ["platform", "채널", "유형", "출처"],
@@ -86,23 +145,114 @@ def detect_location(title, text, url, source):
         return "음성관"
     return "미분류"
 
+def unique_join(items):
+    """표시용 근거에서 중복을 제거한다."""
+    return ", ".join(dict.fromkeys(item for item in items if item))
+
+def sentence_split(text):
+    """후기 문장을 단순 분리한다."""
+    return [part.strip() for part in re.split(r"(?<=[.!?。])\s+|[\r\n]+", str(text)) if part.strip()]
+
+def keyword_hits(text, keywords):
+    compact = re.sub(r"\s+", "", text)
+    return [word for word in keywords if word.replace(" ", "") in compact]
+
+def find_pattern_evidence(text, patterns):
+    found = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            found.append(match.group(0).strip())
+    return found
+
+def analyze_sentence(sentence):
+    """문장 단위 감성 점수와 판정 근거를 계산한다."""
+    compact = re.sub(r"\s+", "", sentence)
+    positive_hits = keyword_hits(sentence, POSITIVE)
+    negative_hits = keyword_hits(sentence, NEGATIVE)
+    strong_positive_hits = keyword_hits(sentence, STRONG_POSITIVE)
+    strong_negative_hits = keyword_hits(sentence, STRONG_NEGATIVE)
+    negated_negative = find_pattern_evidence(sentence, NEGATED_NEGATIVE_PATTERNS)
+    negated_positive = find_pattern_evidence(sentence, NEGATED_POSITIVE_PATTERNS)
+    reversals = find_pattern_evidence(sentence, POSITIVE_REVERSAL_PATTERNS)
+
+    positive_score = len(positive_hits) + 2 * len(strong_positive_hits)
+    negative_score = len(negative_hits) + 2 * len(strong_negative_hits)
+
+    # "지루하지 않았다"처럼 부정 단어가 부정된 경우 부정 점수를 제거하고 긍정 점수를 가산
+    for evidence in negated_negative:
+        related = sum(1 for word in NEGATIVE if word.replace(" ", "") in re.sub(r"\s+", "", evidence))
+        negative_score = max(0, negative_score - max(1, related))
+        positive_score += 2
+
+    # "좋지 않았다"처럼 긍정 단어가 부정된 경우 반대로 보정
+    for evidence in negated_positive:
+        related = sum(1 for word in POSITIVE if word.replace(" ", "") in re.sub(r"\s+", "", evidence))
+        positive_score = max(0, positive_score - max(1, related))
+        negative_score += 2
+
+    # 부정 예상 뒤 실제 경험이 긍정인 경우 강하게 긍정 보정
+    if reversals:
+        positive_score += 3 * len(reversals)
+        # 반전 패턴 안의 부정어는 실제 평가가 아니라 예상/우려이므로 감점하지 않는다.
+        for evidence in reversals:
+            related = sum(1 for word in NEGATIVE if word.replace(" ", "") in re.sub(r"\s+", "", evidence))
+            negative_score = max(0, negative_score - max(1, related))
+
+    # 역접 표현 뒤쪽의 결론을 한 번 더 평가해 최종 경험에 가중치를 준다.
+    for marker in CONTRAST_MARKERS:
+        if marker in sentence:
+            tail = sentence.rsplit(marker, 1)[-1]
+            tail_pos = keyword_hits(tail, POSITIVE)
+            tail_neg = keyword_hits(tail, NEGATIVE)
+            positive_score += len(tail_pos)
+            negative_score += len(tail_neg)
+
+    return {
+        "positive_score": positive_score,
+        "negative_score": negative_score,
+        "positive_evidence": positive_hits + strong_positive_hits,
+        "negative_evidence": negative_hits + strong_negative_hits,
+        "reversal_evidence": negated_negative + negated_positive + reversals,
+    }
+
 def sentiment(text, rating):
-    compact = re.sub(r"\s+", "", str(text))
-    pos = sum(compact.count(w.replace(" ", "")) for w in POSITIVE)
-    neg = sum(compact.count(w.replace(" ", "")) for w in NEGATIVE)
-    score = pos - neg
-    rating_note = ""
+    """문장별 결과를 합산하고 별점을 참고해 최종 감성을 정한다."""
+    sentences = sentence_split(text) or [str(text)]
+    total_pos = 0
+    total_neg = 0
+    positive_evidence = []
+    negative_evidence = []
+    reversal_evidence = []
+
+    for sentence in sentences:
+        result = analyze_sentence(sentence)
+        total_pos += result["positive_score"]
+        total_neg += result["negative_score"]
+        positive_evidence.extend(result["positive_evidence"])
+        negative_evidence.extend(result["negative_evidence"])
+        reversal_evidence.extend(result["reversal_evidence"])
+
+    notes = ["문장 단위 키워드 분석"]
     try:
-        star = float(rating)
+        star = float(str(rating).replace("점", "").strip())
         if star >= 4:
-            score += 2
+            total_pos += 2
         elif star <= 2:
-            score -= 2
-        rating_note = f"별점 {star:g}점 반영"
+            total_neg += 2
+        notes.append(f"별점 {star:g}점 반영")
     except (TypeError, ValueError):
         pass
+
+    score = total_pos - total_neg
     label = "긍정" if score > 0 else ("부정" if score < 0 else "중립")
-    return label, score, pos, neg, rating_note or "텍스트 키워드 분석"
+    if reversal_evidence:
+        notes.append("반전·부정어 문맥 반영")
+
+    return (
+        label, score, total_pos, total_neg,
+        unique_join(positive_evidence), unique_join(negative_evidence),
+        unique_join(reversal_evidence), " / ".join(notes)
+    )
 
 def topic(text):
     compact = re.sub(r"\s+", "", str(text))
@@ -122,12 +272,13 @@ def standardize(df, filename):
         rec["full_text"] = rec["full_text"] or rec["content_summary"]
         combined = f"{rec['title']} {rec['content_summary']} {rec['full_text']}"
         rec["museum_location"] = detect_location(rec["title"], combined, rec["url"], rec["source"])
-        label, score, pos, neg, note = sentiment(combined, rec["rating"])
+        label, score, pos, neg, pos_ev, neg_ev, rev_ev, note = sentiment(combined, rec["rating"])
         rec.update({
             "collected_date": date.today().isoformat(), "sentiment": label, "sentiment_score": score,
-            "positive_score": pos, "negative_score": neg, "keyword": "한독의약박물관",
-            "is_duplicate": False, "duplicate_group": "", "priority_source": rec["platform"],
-            "primary_topic": topic(combined), "notes": note,
+            "positive_score": pos, "negative_score": neg, "positive_evidence": pos_ev,
+            "negative_evidence": neg_ev, "reversal_evidence": rev_ev,
+            "keyword": "한독의약박물관", "is_duplicate": False, "duplicate_group": "",
+            "priority_source": rec["platform"], "primary_topic": topic(combined), "notes": note,
         })
         records.append(rec)
     return pd.DataFrame(records)
@@ -138,12 +289,11 @@ def deduplicate(df, threshold):
     work["_priority"] = work["platform"].map(priority).fillna(9)
     work = work.sort_values("_priority", kind="stable").reset_index(drop=True)
     representatives = []
-    groups = []
     for idx, row in work.iterrows():
         url_key = normalize(row["url"])
         text_key = normalize(row["title"] or row["full_text"][:140])
         match = None
-        for rep_idx, rep_url, rep_text, gid in representatives:
+        for _, rep_url, rep_text, gid in representatives:
             same_url = bool(url_key and rep_url and url_key == rep_url)
             similar = bool(text_key and rep_text and SequenceMatcher(None, text_key, rep_text).ratio() >= threshold)
             if same_url or similar:
@@ -157,7 +307,6 @@ def deduplicate(df, threshold):
             gid = f"D{len(representatives)+1:04d}"
             work.at[idx, "duplicate_group"] = gid
             representatives.append((idx, url_key, text_key, gid))
-        groups.append(work.at[idx, "duplicate_group"])
     return work.drop(columns="_priority")
 
 def excel_bytes(data):
@@ -176,7 +325,7 @@ def excel_bytes(data):
     return output.getvalue()
 
 st.title("💊 한독의약박물관 온라인 후기 감성 분석기")
-st.caption("음성관과 서울관 후기를 구분하고, 플랫폼별·관별 감성 및 주제를 그래프로 확인합니다.")
+st.caption("음성관과 서울관 후기를 구분하고, 반전 문맥을 반영해 플랫폼별·관별 감성 및 주제를 분석합니다.")
 
 with st.sidebar:
     st.header("분석 설정")
@@ -184,6 +333,7 @@ with st.sidebar:
     remove_duplicates = st.checkbox("중복 후기를 분석에서 제외", value=True)
     st.markdown("**관 구분 기준**")
     st.caption("서울관: 서울관·마곡·퓨처콤플렉스·강서구\n\n음성관: 음성·대소·대풍산단·팩토리투어")
+    st.info("'지루할까 걱정했는데 전혀 아니었다'처럼 부정 예상 뒤 긍정 결론이 오는 문맥을 긍정으로 보정합니다.")
 
 files = st.file_uploader("후기 CSV 또는 Excel 업로드", type=["csv", "xlsx"], accept_multiple_files=True)
 if not files:
@@ -218,9 +368,12 @@ selected_platform = f2.selectbox("플랫폼 선택", platform_options)
 selected_sentiment = f3.selectbox("감성 선택", sentiment_options)
 
 filtered = analysis_data.copy()
-if selected_location != "전체": filtered = filtered[filtered["museum_location"] == selected_location]
-if selected_platform != "전체": filtered = filtered[filtered["platform"] == selected_platform]
-if selected_sentiment != "전체": filtered = filtered[filtered["sentiment"] == selected_sentiment]
+if selected_location != "전체":
+    filtered = filtered[filtered["museum_location"] == selected_location]
+if selected_platform != "전체":
+    filtered = filtered[filtered["platform"] == selected_platform]
+if selected_sentiment != "전체":
+    filtered = filtered[filtered["sentiment"] == selected_sentiment]
 
 counts = filtered["sentiment"].value_counts()
 metrics = st.columns(5)
@@ -255,8 +408,12 @@ comparison = pd.crosstab(filtered["museum_location"], filtered["sentiment"], mar
 comparison = comparison.rename(columns={"All": "합계"})
 st.dataframe(comparison, use_container_width=True)
 
-st.subheader("후기 상세")
-display_columns = ["museum_location", "platform", "published_date", "title", "content_summary", "rating", "sentiment", "sentiment_score", "primary_topic", "url"]
+st.subheader("후기 상세 및 판정 근거")
+display_columns = [
+    "museum_location", "platform", "published_date", "title", "content_summary", "rating",
+    "sentiment", "sentiment_score", "positive_evidence", "negative_evidence",
+    "reversal_evidence", "primary_topic", "url"
+]
 st.dataframe(filtered[display_columns], use_container_width=True, hide_index=True)
 
 st.download_button(
@@ -264,4 +421,4 @@ st.download_button(
     file_name=f"한독의약박물관_후기감성분석_{date.today().isoformat()}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary"
 )
-st.caption("감성 분석과 관 구분은 키워드 기반 참고 결과입니다. 공식 평가 자료에는 원문을 사람이 최종 검토해 주세요. 미분류 후기는 상세표에서 확인 후 원문 기준으로 검토하세요.")
+st.caption("감성 분석과 관 구분은 규칙 기반 참고 결과입니다. 공식 평가 자료에는 판정 근거와 원문을 사람이 최종 검토해 주세요.")
