@@ -155,7 +155,7 @@ def detect_platform(filename, url, supplied=""):
         return "인스타그램"
     return supplied or "기타"
 
-def classify_relevance(title, text, url, source):
+def classify_relevance(title, text, url, source, platform=""):
     """한독의약박물관 자체 후기인지 먼저 판정한다.
 
     검색 결과에 '한독의약박물관'이 비교 대상으로 한 번 언급되거나,
@@ -166,6 +166,13 @@ def classify_relevance(title, text, url, source):
     source_norm = re.sub(r"\s+", "", str(source)).lower()
     url_norm = str(url).lower()
     whole = f"{title_norm} {body_norm} {source_norm} {url_norm}"
+
+    # 지도 리뷰는 파일/플랫폼 자체가 장소를 특정한다. 리뷰 본문에 박물관명이 없더라도 정상이다.
+    # 따라서 한독의약박물관 장소 페이지에서 수집된 지도 리뷰는 직접 언급 여부로 제외하지 않는다.
+    source_platform = f"{source_norm} {str(platform).lower()}"
+    is_map_review = any(term in source_platform for term in ["구글맵", "구글", "google", "카카오맵", "카카오", "kakao"])
+    if is_map_review:
+        return True, "지도 장소 리뷰: 본문 직접 언급 불필요", 0
 
     target_terms = [
         "한독의약박물관", "한독박물관", "handokmuseum", "handokmuseumofmedicine",
@@ -361,7 +368,7 @@ def standardize(df, filename):
         rec["full_text"] = rec["full_text"] or rec["content_summary"]
         combined = f"{rec['title']} {rec['content_summary']} {rec['full_text']}"
         relevant, relevance_reason, target_mentions = classify_relevance(
-            rec["title"], combined, rec["url"], rec["source"]
+            rec["title"], combined, rec["url"], rec["source"], rec["platform"]
         )
         rec["museum_location"] = detect_location(rec["title"], combined, rec["url"], rec["source"]) if relevant else "분석 제외"
         if relevant:
@@ -433,7 +440,7 @@ with st.sidebar:
     remove_duplicates = st.checkbox("중복 후기를 분석에서 제외", value=True)
     st.markdown("**관 구분 기준**")
     st.caption("서울관: 서울관·마곡·퓨처콤플렉스·강서구\n\n음성관: 음성·대소·대풍산단·팩토리투어")
-    st.info("부정은 실제 방문 경험에 대한 명시적 불만이 있을 때만 판정합니다. 예약 매진의 아쉬움, 지루할까 걱정, 힘이 필요하다는 설명은 부정 후기로 세지 않습니다.")
+    st.info("부정은 실제 방문 경험에 대한 명시적 불만이 있을 때만 판정합니다. 지도 리뷰는 장소 페이지 자체가 대상을 특정하므로 본문에 박물관명이 없어도 분석에 포함합니다.")
 
 files = st.file_uploader("후기 CSV 또는 Excel 업로드", type=["csv", "xlsx"], accept_multiple_files=True)
 if not files:
