@@ -79,6 +79,25 @@ NEGATED_POSITIVE_PATTERNS = [
 # 역접 뒤의 결론에 더 높은 가중치를 주기 위한 접속 표현
 CONTRAST_MARKERS = ["하지만", "그런데", "그렇지만", "했는데", "였는데", "반면", "오히려", "생각보다", "전혀"]
 
+# 실제 방문 경험에 대한 명확한 불만만 부정 판정의 핵심 근거로 사용한다.
+# 예약 매진의 아쉬움, 아이가 힘을 써야 했다는 설명, "지루할까 걱정" 같은 예상은 제외한다.
+EXPLICIT_COMPLAINT_PATTERNS = [
+    r"(?:전시|체험|관람|시설|주차|안내|직원|설명|프로그램)(?:이|가|은|는|도)?[^.!?\n]{0,25}(?:별로였|실망스러|불편했|부족했|지루했|재미없었|아쉬웠|협소했|불친절했)",
+    r"(?:다시는|재방문은)[^.!?\n]{0,25}(?:안|않|못)",
+    r"(?:추천하지|비추천|돈이아깝|시간낭비|볼게없|볼 게 없)",
+    r"(?:주차|길찾기|접근성)[^.!?\n]{0,20}(?:너무|매우)?[^.!?\n]{0,15}(?:불편|어렵)",
+]
+
+# 글 전체의 최종 추천 및 만족 표현. 발견되면 결론에 높은 가중치를 준다.
+FINAL_POSITIVE_PATTERNS = [
+    r"(?:강력|적극|꼭)?\s*추천(?:합니다|해요|드려요|하고 싶|할 만)",
+    r"(?:정말|너무|매우)?\s*만족(?:스러웠|했|합니다|해요)",
+    r"(?:유익함과 재미|유익하고 즐거|재미와 유익)",
+    r"(?:최고의|뜻깊은|값진|행복한|즐거운)\s*(?:시간|체험|관람|수업|기억)",
+    r"(?:다시|또)\s*(?:방문|가고 싶|오고 싶)",
+    r"아이(?:들|가)?[^.!?\n]{0,30}(?:좋아했|즐거워했|흥미로워했|집중했)",
+]
+
 TOPICS = {
     "교육·체험": ["체험", "교육", "약사", "연구원", "간호사", "응급구조", "만들기", "프로그램"],
     "전시·유물": ["전시", "유물", "의약", "약장", "의료기구", "역사", "보물"],
@@ -224,9 +243,12 @@ def analyze_sentence(sentence):
     negated_negative = find_pattern_evidence(sentence, NEGATED_NEGATIVE_PATTERNS)
     negated_positive = find_pattern_evidence(sentence, NEGATED_POSITIVE_PATTERNS)
     reversals = find_pattern_evidence(sentence, POSITIVE_REVERSAL_PATTERNS)
+    explicit_complaints = find_pattern_evidence(sentence, EXPLICIT_COMPLAINT_PATTERNS)
+    final_positives = find_pattern_evidence(sentence, FINAL_POSITIVE_PATTERNS)
 
-    positive_score = len(positive_hits) + 2 * len(strong_positive_hits)
-    negative_score = len(negative_hits) + 2 * len(strong_negative_hits)
+    positive_score = len(positive_hits) + 2 * len(strong_positive_hits) + 3 * len(final_positives)
+    # 단순 부정 단어는 약한 신호로만 사용하고, 명시적 불만 문장에 높은 가중치를 둔다.
+    negative_score = len(negative_hits) + 2 * len(strong_negative_hits) + 3 * len(explicit_complaints)
 
     # "지루하지 않았다"처럼 부정 단어가 부정된 경우 부정 점수를 제거하고 긍정 점수를 가산
     for evidence in negated_negative:
@@ -263,6 +285,8 @@ def analyze_sentence(sentence):
         "positive_evidence": positive_hits + strong_positive_hits,
         "negative_evidence": negative_hits + strong_negative_hits,
         "reversal_evidence": negated_negative + negated_positive + reversals,
+        "explicit_complaint_evidence": explicit_complaints,
+        "final_positive_evidence": final_positives,
     }
 
 def sentiment(text, rating):
@@ -273,6 +297,8 @@ def sentiment(text, rating):
     positive_evidence = []
     negative_evidence = []
     reversal_evidence = []
+    explicit_complaint_evidence = []
+    final_positive_evidence = []
 
     for sentence in sentences:
         result = analyze_sentence(sentence)
@@ -281,6 +307,8 @@ def sentiment(text, rating):
         positive_evidence.extend(result["positive_evidence"])
         negative_evidence.extend(result["negative_evidence"])
         reversal_evidence.extend(result["reversal_evidence"])
+        explicit_complaint_evidence.extend(result["explicit_complaint_evidence"])
+        final_positive_evidence.extend(result["final_positive_evidence"])
 
     notes = ["문장 단위 키워드 분석"]
     try:
@@ -294,13 +322,24 @@ def sentiment(text, rating):
         pass
 
     score = total_pos - total_neg
-    label = "긍정" if score > 0 else ("부정" if score < 0 else "중립")
+    # 오분류 방지 원칙: 부정은 실제 방문 경험에 대한 명시적 불만이 있을 때만 판정한다.
+    # 명시적 불만이 없고 추천·만족·즐거움 근거가 있으면 긍정으로 처리한다.
+    if explicit_complaint_evidence and score < 0:
+        label = "부정"
+    elif total_pos > 0 or final_positive_evidence or reversal_evidence:
+        label = "긍정"
+    else:
+        label = "중립"
     if reversal_evidence:
         notes.append("반전·부정어 문맥 반영")
+    if final_positive_evidence:
+        notes.append("최종 추천·만족 표현 반영")
+    if negative_evidence and not explicit_complaint_evidence:
+        notes.append("부정 단어는 있으나 명시적 불만 없음")
 
     return (
         label, score, total_pos, total_neg,
-        unique_join(positive_evidence), unique_join(negative_evidence),
+        unique_join(positive_evidence + final_positive_evidence), unique_join(negative_evidence),
         unique_join(reversal_evidence), " / ".join(notes)
     )
 
@@ -394,7 +433,7 @@ with st.sidebar:
     remove_duplicates = st.checkbox("중복 후기를 분석에서 제외", value=True)
     st.markdown("**관 구분 기준**")
     st.caption("서울관: 서울관·마곡·퓨처콤플렉스·강서구\n\n음성관: 음성·대소·대풍산단·팩토리투어")
-    st.info("'지루할까 걱정했는데 전혀 아니었다'처럼 부정 예상 뒤 긍정 결론이 오는 문맥을 긍정으로 보정합니다.")
+    st.info("부정은 실제 방문 경험에 대한 명시적 불만이 있을 때만 판정합니다. 예약 매진의 아쉬움, 지루할까 걱정, 힘이 필요하다는 설명은 부정 후기로 세지 않습니다.")
 
 files = st.file_uploader("후기 CSV 또는 Excel 업로드", type=["csv", "xlsx"], accept_multiple_files=True)
 if not files:
